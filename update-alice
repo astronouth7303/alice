@@ -3,7 +3,15 @@ set -e
 
 cd `dirname $0`
 
+rev=`git rev-parse HEAD`
+
 git pull
-git submodule update --recursive
-cpanm --local-lib extlib local::lib
-cpanm --local-lib extlib --installdeps --notest .
+subs=`git submodule update --recursive`
+
+if [ $rev != `git rev-parse HEAD` -o "x$subs" != "x" ] ; then
+    cpanm --local-lib extlib local::lib
+    cpanm --local-lib extlib --installdeps --notest .
+    echo Restarting...
+    ./alicectl stop
+    ./alicectrl start
+fi

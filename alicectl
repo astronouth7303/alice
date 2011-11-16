@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+cd `dirname $0`
+
+case "$1" in
+  start)
+    bin/alice & echo $! > /tmp/aliced.pid
+  ;;
+  stop)
+    kill -QUIT `cat /tmp/aliced.pid`
+    rm /tmp/aliced.pid
+  ;;
+esac
