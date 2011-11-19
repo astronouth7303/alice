@@ -13,5 +13,5 @@ if [ $rev != `git rev-parse HEAD` -o "x$subs" != "x" ] ; then
     cpanm --local-lib extlib --installdeps --notest .
     echo Restarting...
     ./alicectl stop
-    ./alicectrl start
+    ./alicectl start
 fi
