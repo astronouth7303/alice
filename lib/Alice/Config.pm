@@ -22,7 +22,7 @@ has assetdir => (
   }
 );
 
-has [qw/images avatars alerts audio/] => (
+has [qw/images avatars alerts audio animate/] => (
   is      => 'rw',
   isa     => 'Str',
   default => "show",
@@ -50,12 +50,6 @@ has quitmsg => (
   is      => 'rw',
   isa     => 'Str',
   default => 'alice.',
-);
-
-has debug => (
-  is      => 'rw',
-  isa     => 'Bool',
-  default => 0,
 );
 
 has port => (
@@ -151,12 +145,6 @@ has callback => (
   isa     => 'CodeRef',
 );
 
-has enable_logging => (
-  is      => 'rw',
-  isa     => 'Bool',
-  default => 1,
-);
-
 sub BUILD {
   my $self = shift;
   $self->load;
@@ -203,20 +191,19 @@ sub load {
 
 sub read_commandline_args {
   my $self = shift;
-  my ($port, $debug, $address, $nologs);
-  GetOptions("port=i" => \$port, "debug" => \$debug, "address=s" => \$address, "disable-logging" => \$nologs);
+  my ($port, $debug, $address, $log);
+  GetOptions("port=i" => \$port, "debug=s" => \$debug, "log=s" => \$log, "address=s" => \$address);
   $self->commandline->{port} = $port if $port and $port =~ /\d+/;
-  $self->commandline->{debug} = 1 if $debug;
   $self->commandline->{address} = $address if $address;
-  $self->commandline->{disable_logging} = 1 if $nologs;
-}
 
-sub logging {
-  my $self = shift;
-  if ($self->commandline->{disable_logging}) {
-    return 0;
+  $AnyEvent::Log::FILTER->level($debug || "info");
+
+  if ($log) {
+    $AnyEvent::Log::COLLECT->attach(AnyEvent::Log::Ctx->new(
+      level => ($debug || "info"),
+      log_to_file => $log
+    ));
   }
-  return $self->enable_logging;
 }
 
 sub http_port {
@@ -236,14 +223,6 @@ sub http_address {
     $self->address("127.0.0.1");
   }
   return $self->address;
-}
-
-sub show_debug {
-  my $self = shift;
-  if ($self->commandline->{debug}) {
-    return 1;
-  }
-  return $self->debug;
 }
 
 sub merge {
@@ -313,5 +292,4 @@ sub remove_ignore {
   $self->write;
 }
 
-__PACKAGE__->meta->make_immutable;
 1;

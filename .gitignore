@@ -15,5 +15,8 @@ README
 *.acorn
 t/alice/test_config
 MYMETA.json
-MYMETA.yml
 extlib
+alice.log
+inc
+MYMETA.yml
+

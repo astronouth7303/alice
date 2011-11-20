@@ -147,11 +147,6 @@ div#config_menu > ul {
   }
 }
 
-div#config_menu > ul > li{
-  padding-left: 10px;
-  padding-right: 10px;
-}
-
 div#config_menu ul ul {
   left: 100%;
   right: auto;
@@ -636,12 +631,6 @@ li.event div.left {
   width: 95px;
 }
 
-li.event div.left span.timestamp {
-  opacity: 0;
-  //-webkit-transition: opacity 0.1s ease-in-out;
-  //-moz-transition: opacity 0.1s ease-in-out;
-}
-
 ul.messages li.avatar:not(.consecutive) {
   z-index: 800;
 }
@@ -667,24 +656,21 @@ ul.messages li.avatar span.nick {
 
 div.timehint {
   font-size: 10px;
-  position: absolute;
-  right: 5px;
-  top: 6px;
+  float: right;
+  padding: 6px 5px 0 5px;
   color: $timehint_color;
   opacity: 0;
   //-webkit-transition: opacity 0.1s ease-in-out;
 }
 
 li.consecutive div.timehint {
-  top: auto;
-  bottom: 3px;
+  padding: 3px 5px 0 5px;
 }
 
 div.msg {
   margin-left: 100px;
   min-height: 1.2em;
   padding: 3px 5px;
-  padding-right: 45px;
   word-wrap: break-word;
   -khtml-line-break: after-white-space;
   -khtml-nbsp-mode: space;
@@ -702,14 +688,28 @@ div.msg div.oembed {
 
 sup.external {
   line-height: 0px;
-  font-size: 0.7em;
-  letter-spacing: -1px;
-  margin-left: 2px;
-  font-weight: bold;
+  vertical-align: 2px;
+  padding-left: 1px;
 }
 
 sup.external a {
   text-decoration: none;
+  color: #444;
+  text-shadow: 1px 1px 1px white;
+  margin-left: 1px;
+  font-size: 0.7em;
+  background-color: #CCC;
+  border-radius: 3px;
+  padding: 1px 2px 1px 3px;
+  font-weight: normal;
+  letter-spacing: 0;
+  border-right: 1px solid #aaa;
+  border-bottom: 1px solid #aaa;
+
+}
+
+sup.external a:after {
+  content: " ▸";
 }
 
 div.oembed iframe {
@@ -779,12 +779,11 @@ div.oembed a {
   word-break: normal;
 }
 
-div.image {
+div.image a {
   position: relative;
-  display: none;
 }
 
-div.image a.hideimg {
+div.image a a.hideimg {
   position: absolute;
   white-space: nowrap;
   top: 0px;
@@ -799,12 +798,12 @@ div.image a.hideimg {
   text-shadow: 1px 1px 1px rgba(0,0,0,0.5);
 }
 
-div.image:hover a.hideimg {
+div.image a:hover a.hideimg {
   opacity: 1;
   background: rgba(0,0,0,0.25);
 }
 
-div.image a.hideimg:hover {
+div.image a a.hideimg:hover {
   background: rgba(0,0,0,0.5);
   opacity: 1;
 }
@@ -1459,9 +1458,15 @@ span.nickborder {
 
 .dropdown li {
   display: block;
+  padding: 0;
+}
+
+.dropdown li span,
+.dropdown li a {
+  color: $tab_text;
+  display: block;
   padding: 4px 10px;
   text-decoration: none;
-  color: $tab_text;
 }
 
 .dropdown li {

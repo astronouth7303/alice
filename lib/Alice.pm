@@ -1,25 +1,27 @@
 package Alice;
 
 use AnyEvent;
-use Text::MicroTemplate::File;
-use Alice::Window;
-use Alice::InfoWindow;
-use Alice::HTTPD;
-use Alice::IRC;
-use Alice::Config;
-use Alice::Logger;
-use Alice::History;
-use Alice::Tabset;
+use AnyEvent::Strict;
+use AnyEvent::Log;
+
 use Any::Moose;
-use File::Copy;
+use Text::MicroTemplate::File;
 use Digest::MD5 qw/md5_hex/;
 use List::Util qw/first/;
-use List::MoreUtils qw/any none/;
+use List::MoreUtils qw/any/;
 use AnyEvent::IRC::Util qw/filter_colors/;
 use IRC::Formatting::HTML qw/html_to_irc/;
-use Try::Tiny;
-use JSON;
 use Encode;
+
+use Alice::Window;
+use Alice::InfoWindow;
+use Alice::HTTP::Server;
+use Alice::IRC;
+use Alice::Config;
+use Alice::Tabset;
+use Alice::Request;
+use Alice::MessageBuffer;
+use Alice::MessageStore;
 
 our $VERSION = '0.19';
 
@@ -44,15 +46,6 @@ sub remove_irc {$_[0]->_ircs([ grep { $_->alias ne $_[1] } $_[0]->ircs])}
 sub irc_aliases {map {$_->alias} $_[0]->ircs}
 sub connected_ircs {grep {$_->is_connected} $_[0]->ircs}
 
-has httpd => (
-  is      => 'rw',
-  isa     => 'Alice::HTTPD',
-  lazy    => 1,
-  default => sub {
-    Alice::HTTPD->new(app => shift);
-  },
-);
-
 has streams => (
   is      => 'rw',
   isa     => 'ArrayRef',
@@ -63,36 +56,19 @@ sub add_stream {unshift @{shift->streams}, @_}
 sub no_streams {@{$_[0]->streams} == 0}
 sub stream_count {scalar @{$_[0]->streams}}
 
-has history => (
-  is      => 'rw',
+has message_store => (
+  is      => 'ro',
   lazy    => 1,
   default => sub {
     my $self = shift;
-    my $config = $self->config->path."/log.db";
-    copy($self->config->assetdir."/log.db", $config) unless -e $config;
-    Alice::History->new(dbfile => $config);
-  },
+    my $buffer = $self->config->path."/buffer.db";
+    if (! -e  $buffer) {
+      require File::Copy;
+      File::Copy::copy($self->config->assetdir."/buffer.db", $buffer);
+    }
+    Alice::MessageStore->new(dsn => ["dbi:SQLite:dbname=$buffer", "", ""]);
+  }
 );
-
-sub store {
-  my ($self, @args) = @_;
-  return unless $self->config->logging;
-  my $idle_w; $idle_w = AE::idle sub {
-    $self->history->store(
-      @args,
-      user => $self->user,
-      time => time,
-    );
-    undef $idle_w;
-  };
-}
-
-has logger => (
-  is        => 'ro',
-  default   => sub {Alice::Logger->new},
-);
-
-sub log {$_[0]->logger->log($_[1] => $_[2]) if $_[0]->config->show_debug}
 
 has _windows => (
   is        => 'rw',
@@ -126,9 +102,10 @@ has 'info_window' => (
   lazy => 1,
   default => sub {
     my $self = shift;
+    my $id = $self->_build_window_id("info", "info");
     my $info = Alice::InfoWindow->new(
-      id       => $self->_build_window_id("info", "info"),
-      assetdir => $self->config->assetdir,
+      id       => $id,
+      buffer   => $self->_build_window_buffer($id),
       app      => $self,
     );
     $self->add_window($info);
@@ -146,7 +123,7 @@ sub BUILDARGS {
 
   my $self = {};
 
-  for (qw/logger commands history template user httpd/) {
+  for (qw/template user message_store/) {
     if (exists $options{$_}) {
       $self->{$_} = $options{$_};
       delete $options{$_};
@@ -175,10 +152,8 @@ sub run {
 sub init {
   my $self = shift;
   $self->commands;
-  $self->history if $self->config->logging;
   $self->info_window;
   $self->template;
-  $self->httpd;
 
   $self->add_irc_server($_, $self->config->servers->{$_})
     for keys %{$self->config->servers};
@@ -187,16 +162,15 @@ sub init {
 sub init_shutdown {
   my ($self, $cb, $msg) = @_;
 
-  $self->history(undef);
   $self->alert("Alice server is shutting down");
   $_->disconnect($msg) for $self->connected_ircs;
 
   my ($w, $t);
   my $shutdown = sub {
-    $self->shutdown;
-    $cb->() if $cb;
     undef $w;
     undef $t;
+    $self->shutdown;
+    $cb->() if $cb;
   };
 
   $w = AE::idle sub {$shutdown->() unless $self->connected_ircs};
@@ -251,15 +225,29 @@ sub alert {
 
 sub create_window {
   my ($self, $title, $connection) = @_;
+  my $id = $self->_build_window_id($title, $connection->alias);
   my $window = Alice::Window->new(
     title    => $title,
+    type     => $connection->is_channel($title) ? "channel" : "privmsg",
     irc      => $connection,
-    assetdir => $self->config->assetdir,
     app      => $self,
-    id       => $self->_build_window_id($title, $connection->alias), 
+    id       => $id,
+    buffer   => $self->_build_window_buffer($id),
   );
+  if ($window->is_channel) {
+    $connection->config->{channels} = [ $connection->channels ];
+    $self->config->write;
+  }
   $self->add_window($window);
   return $window;
+}
+
+sub _build_window_buffer {
+  my ($self, $id) = @_;
+  Alice::MessageBuffer->new(
+    id => $id,
+    store => $self->message_store,
+  );
 }
 
 sub _build_window_id {
@@ -297,8 +285,13 @@ sub sorted_windows {
 sub close_window {
   my ($self, $window) = @_;
   $self->broadcast($window->close_action);
-  $self->log(debug => "sending a request to close a tab: " . $window->title)
-    if $self->stream_count;
+  AE::log debug => "sending a request to close a tab: " . $window->title;
+  if ($window->is_channel) {
+    $window->irc->config->{channels} = [
+      grep {$_ ne $window->title} $window->irc->channels
+    ];
+    $self->config->write;
+  }
   $self->remove_window($window->id) if $window->type ne "info";
 }
 
@@ -392,46 +385,57 @@ sub ping {
   $_->ping for grep {$_->is_xhr} @{$self->streams};
 }
 
-sub update_stream {
-  my ($self, $stream, $req) = @_;
+sub update_window {
+  my ($self, $stream, $window, $max, $min, $limit, $total, $cb) = @_;
 
-  my $min = $req->param('msgid') || 0;
-  my $limit = $req->param('limit') || 100;
+  my $step = 20;
+  if ($limit - $total <  20) {
+    $step = $limit - $total;
+  }
 
-  $self->log(debug => "sending stream update");
+  $window->buffer->messages($max, $min, $step, sub {
+    my $msgs = shift;
 
-  my @windows = $self->windows;
+    $stream->send([{
+      window => $window->serialized,
+      type   => "chunk",
+      nicks  => $window->all_nicks,
+      range  => (@$msgs ? [$msgs->[0]{msgid}, $msgs->[-1]{msgid}] : []),
+      html   => join "", map {$_->{html}} @$msgs,
+    }]);
 
-  if (my $id = $req->param('tab')) {
-    if (my $active = $self->get_window($id)) {
-      @windows = grep {$_->id ne $id} @windows;
-      unshift @windows, $active;
+    $total += $step;
+
+    if (@$msgs == $step and $total < $limit) {
+      $max = $msgs->[0]->{msgid} - 1;
+      $self->update_window($stream, $window, $max, $min, $limit, $total, $cb);
     }
-  }
-
-  for my $window (@windows) {
-    $self->log(debug => "updating stream from $min for ".$window->title);
-    $window->buffer->messages($limit, $min, sub {
-      my $msgs = shift;
-      return unless @$msgs;
-      $stream->send([{
-        window => $window->serialized,
-        type   => "chunk",
-        nicks  => $window->all_nicks,
-        html   => join "", map {$_->{html}} @$msgs,
-      }]); 
-    });
-  }
+    else {
+      $cb->() if $cb;
+      return;
+    }
+  });
 }
 
 sub handle_message {
   my ($self, $message) = @_;
 
   if (my $window = $self->get_window($message->{source})) {
+    my $stream = first {$_->id == $message->{stream}} @{$self->streams};
+    return unless $stream;
+
     $message->{msg} = html_to_irc($message->{msg}) if $message->{html};
 
-    for (split /\n/, $message->{msg}) {
-      $self->irc_command($window, $_) if length $_;
+    for my $line (split /\n/, $message->{msg}) {
+      next unless $line;
+
+      my $input = Alice::Request->new(
+        window => $window,
+        stream => $stream,
+        line   => $line,
+      );
+
+      $self->irc_command($input);
     }
   }
 }
@@ -444,7 +448,7 @@ sub send_highlight {
 
 sub purge_disconnects {
   my ($self) = @_;
-  $self->log(debug => "removing broken streams");
+  AE::log debug => "removing broken streams";
   $self->streams([grep {!$_->closed} @{$self->streams}]);
 }
 
@@ -531,104 +535,4 @@ sub tabsets {
   } sort keys %{$self->config->tabsets};
 }
 
-__PACKAGE__->meta->make_immutable;
 1;
-
-=pod
-
-=head1 NAME
-
-Alice - an Altogether Lovely Internet Chatting Experience
-
-=head1 SYNPOSIS
-
-    my $app = Alice->new;
-    $app->run;
-
-=head1 DESCRIPTION
-
-This is an overview of the Alice class. If you are curious
-about running and/or using alice please read the L<Alice::Readme>.
-
-=head2 CONSTRUCTOR
-
-=over 4
-
-=item Alice->new(%options)
-
-Alice's contructor takes these options:
-
-=item user => $username
-
-This can be a unique name for this Alice instance, if none is
-provided it will simply use $ENV{USER}.
-
-=back
-
-=head2 METHODS
-
-=over 4
-
-=item run
-
-This will start the Alice. It will start up the HTTP server and
-begin connecting to IRC servers that are set to autoconnect.
-
-=item handle_command ($command_string, $window)
-
-Take a string and matches it to the correct action as defined by
-L<Alice::Command>. A source L<Alice::Window> must also
-be provided.
-
-=item find_window ($title, $connection)
-
-Takes a window title and Alice::IRC object. It will attempt
-to find a matching window and return undef if none is found.
-
-=item alert ($alertstring)
-
-Send a message to all connected clients. It will show up as a red
-line in their currently focused window.
-
-=item create_window ($title, $connection)
-
-This will create a new L<Alice::Window> object associated
-with the provided L<Alice::IRC> object.
-
-=item find_or_create_window ($title, $connection)
-
-This will attempt to find an existing window with the provided
-title and connection. If no window is found it will create
-a new one.
-
-=item windows
-
-Returns a list of all the L<Alice::Window>s.
-
-=item sorted_windows
-
-Returns a list of L<Alice::Windows> sorted in the order
-defined by the user's config.
-
-=item close_window ($window)
-
-Takes an L<Alice::Window> object to be closed. It will
-part if it is a channel and send the required messages to the
-client to close the tab.
-
-=item ircs
-
-Returns a list of all the L<Alice::IRC>s.
-
-=item connected_ircs
-
-Returns a list of all the connected L<Alice::IRC>s.
-
-=item config
-
-Returns this instance's L<Alice::Config> object.
-
-=back
-
-=cut
-

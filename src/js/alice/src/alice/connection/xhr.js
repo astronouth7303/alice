@@ -17,14 +17,12 @@ Alice.Connection.XHR = Class.create(Alice.Connection, {
   _connect: function() {
     setTimeout(function () {
     var now = new Date();
-    var msgid = this.application.msgid();
-    this.application.log("opening new connection starting at "+msgid);
+    this.application.log("opening new xhr stream");
     this.changeStatus("ok");
     this.connected = true;
     this.request = new Ajax.Request('/stream', {
       method: 'get',
       parameters: {
-        msgid: msgid,
         t: now.getTime() / 1000,
         tab: this.application.activeWindow().id
       },
@@ -100,6 +98,8 @@ Alice.Connection.XHR = Class.create(Alice.Connection, {
       params = form;
     }
 
+    params['stream'] = this.id;
+
     new Ajax.Request('/say', {
       method: 'post',
       parameters: params,
@@ -123,14 +123,22 @@ Alice.Connection.XHR = Class.create(Alice.Connection, {
     new Ajax.Request('/say', {
       method: 'post',
       on401: this.gotoLogin,
-      parameters: {source: win.id, msg: "/close"}
+      parameters: {
+        source: win.id,
+        msg: "/close",
+        stream: this.id
+      }
     });
   },
 
   requestWindow: function(title, windowId, message) {
     new Ajax.Request('/say', {
       method: 'post',
-      parameters: {source: windowId, msg: "/create " + title},
+      parameters: {
+        source: windowId,
+        msg: "/create " + title,
+        stream: this.id
+      },
       on401: this.gotoLogin,
       onSuccess: function (transport) {
         this.handleUpdate(transport);
