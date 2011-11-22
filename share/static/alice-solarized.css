@@ -29,8 +29,20 @@ ul#tabs li:hover {
 div#tab_bar .dropdown {
   opacity: 0;
   width: 24px;
-  height: 23px;
+  height: 24px;
   z-index: 905; }
+
+div#join_button {
+  position: absolute;
+  bottom: 0px;
+  right: 12px;
+  width: 24px;
+  height: 24px;
+  background: url(image/sprites.png) -32px -36px no-repeat;
+  cursor: pointer; }
+
+div#join_button:hover {
+  background: url(image/sprites.png) -32px -56px no-repeat; }
 
 div#tab_bar div#tabset_dropdown {
   position: absolute;
@@ -59,7 +71,7 @@ div#tab_menu_left ul {
 
 div#tab_menu_right {
   position: absolute;
-  right: 12px;
+  right: 36px;
   bottom: 0px;
   border-left: 1px solid #44555a; }
 
@@ -153,7 +165,7 @@ div#connection_status.loading {
 div#connection_status {
   display: none;
   width: 24px;
-  height: 23px;
+  height: 24px;
   position: absolute;
   bottom: 0px;
   left: 0px;
@@ -412,7 +424,7 @@ div#tabs_container {
   position: absolute;
   top: 0px;
   bottom: 0px;
-  right: 36px;
+  right: 60px;
   left: 48px;
   overflow: hidden; }
 
@@ -1006,10 +1018,16 @@ div.config {
   box-shadow: 1px 1px 3px #000;
   border: 5px solid #44555a; }
 
+div.config#join {
+  width: 180px;
+  height: 100px;
+  margin-left: -90px;
+  margin-top: -50px; }
+
 div.config#prefs {
   padding-bottom: 29px;
   width: 326px;
-  height: 284px;
+  height: 294px;
   margin-left: -178px;
   margin-top: -162px; }
 

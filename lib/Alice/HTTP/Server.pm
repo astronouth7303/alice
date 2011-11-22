@@ -107,7 +107,7 @@ sub _build_httpd {
     );
   };
 
-  warn $@ if $@;
+  AE::log(debug => $@) if $@;
   return $httpd;
 }
 
@@ -316,8 +316,14 @@ sub merged_options {
   my ($self, $req) = @_;
   my $config = $self->app->config;
 
-  +{ map { $_ => ($req->param($_) || $config->$_) }
-      qw/animate images avatars alerts audio timeformat image_prefix/ };
+  my $options = { map { $_ => ($req->param($_) || $config->$_) }
+      qw/images avatars alerts audio timeformat image_prefix/ };
+
+  if ($options->{images} eq "show" and $config->animate eq "hide") {
+    $options->{image_prefix} = "https://noembed.com/i/still/";
+  }
+
+  return $options;
 }
 
 sub template {
@@ -329,7 +335,13 @@ sub template {
     $res->body($self->render($path));
   };
 
-  $@ ? $res->notfound : $res->send;
+  if ($@) {
+    AE::log(debug => $@);
+    $res->notfound;
+  }
+  else {
+    $res->send;
+  }
 }
 
 sub save_tabsets {

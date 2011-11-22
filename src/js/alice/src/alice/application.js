@@ -93,11 +93,11 @@ Alice.Application = Class.create({
     var elem = new Element("DIV", {"class": "oembed"});
 
     if (data.provider_name == "Twitter") {
-      var scroll = win.shouldScrollToBottom();
+      var position = win.captureScrollPosition();
       elem.setStyle({display: "block"});
       elem.update(html);
       a.replace(elem);
-      if (scroll) win.scrollToBottom(true);
+      win.scrollToPosition(position);
       Alice.makeLinksClickable(elem);
       return;
     }
@@ -111,7 +111,7 @@ Alice.Application = Class.create({
 
     a.observe('click', function(e) {
       e.stop();
-      var scroll = win.shouldScrollToBottom();
+      var position = win.captureScrollPosition();
       if (elem.innerHTML) {
         elem.innerHTML = "";
         elem.style.display = "none";
@@ -121,15 +121,15 @@ Alice.Application = Class.create({
       elem.innerHTML = html;
       Alice.makeLinksClickable(elem);
       var images = elem.select("img");
-      if (scroll && images.length) {
+      if (images.length) {
         images.each(function(img) {
           img.observe("load", function(e) {
-            win.scrollToBottom(true);
+            win.scrollToPosition(position);
             img.stopObserving(img, "load");
           });
         });
       }
-      if (scroll) win.scrollToBottom(true);
+      win.scrollToPosition(position);
     });
   },
 
@@ -212,14 +212,21 @@ Alice.Application = Class.create({
       }
     }
   },
-  
+ 
   toggleHelp: function() {
     var help = $('help');
     help.visible() ? help.hide() : help.show();
   },
+ 
+  toggleJoin: function() {
+    this.connection.get("/join", function (transport) {
+      this.input.disabled = true;
+      $('windows').insert(transport.responseText);
+    }.bind(this));
+  },
 
   toggleConfig: function(e) {
-    this.connection.getConfig(function (transport) {
+    this.connection.get("/config", function (transport) {
       this.input.disabled = true;
       $('windows').insert(transport.responseText);
     }.bind(this));
@@ -228,7 +235,7 @@ Alice.Application = Class.create({
   },
   
   togglePrefs: function(e) {
-    this.connection.getPrefs(function (transport) {
+    this.connection.get("/prefs", function (transport) {
       this.input.disabled = true;
       $('windows').insert(transport.responseText);
     }.bind(this));
@@ -237,7 +244,7 @@ Alice.Application = Class.create({
   },
 
   toggleTabsets: function(e) {
-    this.connection.getTabsets(function (transport) {
+    this.connection.get("/tabsets", function (transport) {
       this.input.disabled = true;
       $('windows').insert(transport.responseText);
       Alice.tabsets.focusIndex(0);
@@ -572,6 +579,7 @@ Alice.Application = Class.create({
       overlap: 'horizontal',
       constraint: 'horizontal',
       format: /(.+)/,
+      only: ["info_tab", "channel_tab", "privmsg_tab"],
       onUpdate: function (res) {
         var tabs = res.childElements();
         var order = tabs.collect(function(t){
@@ -608,7 +616,7 @@ Alice.Application = Class.create({
       // required due to browser weirdness with scrolltobottom on initial focus
       setTimeout(function(){
         this.focusHash() || this.activeWindow().focus();
-        this.activeWindow().scrollToBottom(true)
+        this.activeWindow().scrollToPosition(0)
         this.freeze();
         setTimeout(this.updateOverflowMenus.bind(this), 1000);
       }.bind(this), 10);
@@ -713,12 +721,12 @@ Alice.Application = Class.create({
   toggleNicklist: function() {
     var windows = $('windows');
     var win = this.activeWindow();
-    var scroll = win.shouldScrollToBottom();
+    var position = win.captureScrollPosition();
     if (windows.hasClassName('nicklist'))
       windows.removeClassName('nicklist');
     else
       windows.addClassName('nicklist');
-    if (scroll) win.scrollToBottom(true);
+    win.scrollToPosition(position);
   },
 
   setupNicklist: function() {
@@ -744,6 +752,11 @@ Alice.Application = Class.create({
 
   setupMenus: function() {
     var click = this.supportsTouch ? "touchend" : "mouseup";
+
+    $('join_button').observe(click, function (e) {
+      e.stop();
+      this.toggleJoin();
+    }.bind(this));
 
     $('config_menu').on(click, ".dropdown li", function(e,li) {
       e.stop();
