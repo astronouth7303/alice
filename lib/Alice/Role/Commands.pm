@@ -1,4 +1,4 @@
-package Alice::Role::IRCCommands;
+package Alice::Role::Commands;
 
 use Any::Moose 'Role';
 
@@ -27,7 +27,7 @@ sub irc_command {
     }
   }
   catch {
-    $req->reply($_);
+    $req->reply("$_");
   }
 }
 
@@ -94,7 +94,12 @@ sub run_irc_command {
 
 sub command {
   my ($name, $opts) = @_;
-  $COMMANDS{$name} = $opts;
+
+  if ($opts) {
+    $COMMANDS{$name} = $opts;
+  }
+
+  return $COMMANDS{$name};
 }
 
 command say => {
@@ -146,7 +151,7 @@ command nick => {
 
     my $nick = $opts->[0];
 
-    $req->reply("changing nick to $nick on " . $req->irc->alias);
+    $req->reply("changing nick to $nick on " . $req->irc->name);
     $req->irc->send_srv(NICK => $nick);
   }
 };
@@ -154,11 +159,13 @@ command nick => {
 command qr{names|n} => {
   name => "names",
   window_type => [qw/channel/],
+  connection => 1,
   eg => "/NAMES [-avatars]",
   desc => "Lists nicks in current channel.",
   cb => sub  {
     my ($self, $req) = @_;
-    $req->reply($req->window->nick_table);
+    my @nicks = $req->irc->channel_nicks($req->window->title);
+    $req->reply($req->window->nick_table(@nicks));
   },
 };
 
@@ -173,7 +180,7 @@ command qr{join|j} => {
     my ($self, $req, $opts) = @_;
 
     my $channel = $opts->[0];
-    $req->reply("joining $channel on ". $req->irc->alias);
+    $req->reply("joining $channel on ". $req->irc->name);
     $req->send_srv(JOIN => @$opts);
   },
 };
@@ -197,15 +204,17 @@ command qr{close|wc|part} => {
   name => 'part',
   window_type => [qw/channel privmsg/],
   eg => "/PART",
+  network => 1,
   desc => "Leaves and closes the focused window.",
   cb => sub  {
     my ($self, $req) = @_;
     my $window = $req->window;
 
     $self->close_window($window);
+    my $irc = $self->get_irc($window->network);
 
-    if ($window->is_channel and $window->irc->is_connected) {
-      $window->irc->send_srv(PART => $window->title);
+    if ($window->is_channel and $irc->is_connected) {
+      $irc->send_srv(PART => $window->title);
     }
   },
 };
@@ -258,7 +267,7 @@ command whois =>  {
     my $irc = $req->irc;
 
     $irc->add_whois($nick,sub {
-      $req->reply($_[0] ? $_[0] : "No such nick: $nick on " . $irc->alias);
+      $req->reply($_[0] ? $_[0] : "No such nick: $nick on " . $irc->name);
     });
   }
 };
@@ -300,25 +309,8 @@ command disconnect => {
   desc => "Disconnects from the specified server.",
   cb => sub  {
     my ($self, $req, $opts) = @_;
-
     my $network = $opts->[0];
-    my $irc = $self->get_irc($network);
-
-    if ($irc) {
-      if ($irc->is_connected) {
-        $irc->disconnect;
-      }
-      elsif ($irc->reconnect_timer) {
-        $irc->cancel_reconnect;
-        $req->reply("Canceled reconnect timer for " . $irc->alias);
-      }
-      else {
-        $req->reply("Already disconnected");
-      }
-    }
-    else {
-      $req->reply("$network isn't one of your networks!");
-    }
+    $self->disconnect_irc($network);
   },
 };
 
@@ -329,26 +321,8 @@ command 'connect' => {
   desc => "Connects to the specified server.",
   cb => sub {
     my ($self, $req, $opts) = @_;
-
     my $network = $opts->[0];
-    my $irc = $self->get_irc($network);
-
-    if ($irc) {
-      if ($irc->is_connected) {
-        $req->reply("Already connected");
-      }
-      elsif ($irc->reconnect_timer) {
-        $irc->cancel_reconnect;
-        $req->reply("Canceled reconnect timer for " . $irc->alias);
-        $irc->connect;
-      }
-      else {
-        $irc->connect;
-      }
-    }
-    else {
-      $req->reply("$network isn't one of your networks");
-    }
+    $self->connect_irc($network);
   }
 };
 
@@ -510,7 +484,9 @@ command chunk => {
   opts => qr{(\d+) (\d+)},
   cb => sub {
     my ($self, $req, $opts) = @_;
-    $self->update_window($req->stream, $req->window, $opts->[1], 0, $opts->[0], 0);
+    my $window = $req->window;
+
+    $self->update_window($req->stream, $window, $opts->[1], 0, $opts->[0], 0);
   }
 };
 

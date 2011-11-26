@@ -107,7 +107,7 @@ sub _build_httpd {
     );
   };
 
-  AE::log(debug => $@) if $@;
+  AE::log(warn => $@) if $@;
   return $httpd;
 }
 
@@ -117,7 +117,7 @@ sub dispatch {
   my $req = Alice::HTTP::Request->new($env, $cb);
   my $res = $req->new_response(200);
 
-  AE::log debug => $req->path;
+  AE::log trace => $req->path;
 
   if ($self->auth_enabled) {
     unless ($req->path eq "/login" or $self->is_logged_in($req)) {
@@ -227,6 +227,7 @@ sub setup_xhr_stream {
     on_error => sub { $app->purge_disconnects },
   );
 
+  #$stream->send([$app->connect_actions]);
   $app->add_stream($stream);
 }
 
@@ -244,7 +245,8 @@ sub setup_ws_stream {
       on_error => sub { $app->purge_disconnects },
       ws_version => $req->env->{'websocket.impl'}->version,
     );
-    $stream->send([ map({$_->join_action} $app->windows) ]);
+
+    $stream->send([$app->connect_actions]);
     $app->add_stream($stream);
   }
   else {
@@ -336,7 +338,7 @@ sub template {
   };
 
   if ($@) {
-    AE::log(debug => $@);
+    AE::log(warn => $@);
     $res->notfound;
   }
   else {
@@ -412,11 +414,7 @@ sub save_config {
   }
 
   $self->app->reload_config($new_config);
-
-  $self->app->broadcast(
-    $self->app->format_info("config", "saved")
-  );
-
+  $self->app->send_info("config", "saved");
   $res->ok;
 }
 

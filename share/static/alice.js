@@ -10533,6 +10533,8 @@ Object.extend(Alice, {
 
   connections: {
     disconnectServer: function (alias) {
+      $("menu_" + alias).addClassName("disconnected");
+      $("menu_" + alias).removeClassName("connected");
 		  $(alias + "_status").className = "disconnected";
 		  $(alias + "_status").innerHTML = "disconnected";
 		  $(alias + "_connection").innerHTML = "connect";
@@ -10543,6 +10545,8 @@ Object.extend(Alice, {
 		},
 
     connectServer: function (alias) {
+      $("menu_" + alias).removeClassName("disconnected");
+      $("menu_" + alias).addClassName("connected");
 		  $(alias + "_status").className = "connected";
 		  $(alias + "_status").innerHTML = "connected";
 		  $(alias + "_connection").innerHTML = "disconnect";
@@ -10754,12 +10758,14 @@ Alice.Application = Class.create({
       return;
     }
 
+    var position = win.captureScrollPosition();
     a.update(data.title);
     a.insert({
       after: '<sup class="external"><a target="_blank" href="'+data.url+'">'
              +data.provider_name+'</a></sup>'
     });
     a.up("div.msg").insert(elem);
+    win.scrollToPosition(position);
 
     a.observe('click', function(e) {
       e.stop();
@@ -10803,7 +10809,9 @@ Alice.Application = Class.create({
           }
         }
       }
-      win.updateNicks(action.nicks);
+      else {
+        win.enable();
+      }
     },
     part: function (action) {
       this.closeWindow(action['window'].id);
@@ -10826,14 +10834,8 @@ Alice.Application = Class.create({
       this.activeWindow().announce(action['body']);
     },
     connect: function (action) {
-      action.windows.each(function (win_info) {
-        var win = this.getWindow(win_info.id);
-        if (win) {
-          win.enable();
-        }
-      }.bind(this));
       if ($('servers')) {
-        Alice.connections.connectServer(action.session);
+        Alice.connections.connectServer(action.network);
       }
     },
     disconnect: function (action) {
@@ -10844,7 +10846,7 @@ Alice.Application = Class.create({
         }
       }.bind(this));
       if ($('servers')) {
-        Alice.connections.disconnectServer(action.session);
+        Alice.connections.disconnectServer(action.network);
       }
     },
     focus: function (action) {
@@ -11028,14 +11030,14 @@ Alice.Application = Class.create({
       var pos = win.getTabPosition();
 
       if (pos.left) {
-        var classes = win.status_class();
-        left.addClassName(classes);
-        left_menu.innerHTML += sprintf('<li rel="%s" class="%s"><span>%s</span></a>', win.id, classes, win.title)
+        var classes = win.statuses;
+        classes.each(function(c){left.addClassName(c)});
+        left_menu.innerHTML += sprintf('<li rel="%s" class="%s">%s</a>', win.id, classes.join(" "), win.title)
       }
       else if (pos.right) {
-        var classes = win.status_class();
-        right.addClassName(classes);
-        right_menu.innerHTML += sprintf('<li rel="%s" class="%s"><span>%s</span></a>', win.id, classes, win.title)
+        var classes = win.statuses;
+        classes.each(function(c){right.addClassName(c)});
+        right_menu.innerHTML += sprintf('<li rel="%s" class="%s">%s</a>', win.id, classes.join(" "), win.title)
       }
 
     }.bind(this));
@@ -11689,7 +11691,10 @@ Alice.Connection.WebSocket = Class.create(Alice.Connection, {
     var protocol = (window.location.protocol.match(/^https/) ? "wss://" : "ws://");
     var url = protocol + window.location.host + "/wsstream?" + parameters;
     this.request = new WebSocket(url);
-    this.request.onopen = function(){this.connected = true}.bind(this);
+    this.request.onopen = function(){
+      this.connected = true;
+      this.application.windows().invoke("setupScrollBack");
+    }.bind(this);
     this.request.onmessage = this.handleUpdate.bind(this);
     this.request.onerror = this.handleException.bind(this);
     this.request.onclose = this.handleComplete.bind(this);
@@ -12090,6 +12095,13 @@ Alice.Window = Class.create({
     this.element.addClassName('active');
     this.tab.addClassName('active');
 
+    if (!this.active) {
+      setTimeout(function(){
+        this.scrollToPosition(this.lastScrollPosition);
+        this.setupScrollBack();
+      }.bind(this), 0);
+    }
+
     this.active = true;
 
     this.application.setSource(this.id);
@@ -12105,9 +12117,6 @@ Alice.Window = Class.create({
 
     this.application.displayTopic(this.topic);
     document.title = this.title;
-
-    this.scrollToPosition(this.lastScrollPosition);
-    this.setupScrollBack();
     return this;
   },
 
@@ -12128,16 +12137,11 @@ Alice.Window = Class.create({
 
   markUnread: function(classname) {
     var classes = ["unread"];
-    if (classname && classname != "unread") classes.push(classname);
+    if (classname) classes.push(classname);
 
+    classes.each(function(c){this.tab.addClassName(c)}.bind(this));
+    this.application.highlightChannelSelect(this.id, classes);
     this.statuses = classes;
-    this.tab.addClassName(this.status_class());
-
-    this.application.highlightChannelSelect(this.id, this.status_class());
-  },
-
-  status_class: function() {
-    return this.statuses.join(" ");
   },
 
   disable: function () {
@@ -12171,7 +12175,7 @@ Alice.Window = Class.create({
 
   announce: function (message) {
     this.messages.insert(
-      "<li class='message announce'><div class='msg'>"+message+"</div></li>"
+      "<li class='message monospaced announce'><div class='msg'>"+message+"</div></li>"
     );
     this.scrollToPosition(0);
   },
@@ -12193,15 +12197,18 @@ Alice.Window = Class.create({
     if (chunk['range'][0] > this.msgid) {
       this.messages.insert({"bottom": chunk['html']});
       this.trimMessages();
-      var last = chunk['range'][1];
+      this.msgid = chunk['range'][1];
     }
     else {
+      this.bulk_insert = true;
       this.messages.insert({"top": chunk['html']});
     }
 
     this.messages.select("li:not(.filtered)").each(function (li) {
       this.application.applyFilters(li, this);
     }.bind(this));
+
+    this.bulk_insert = false;
 
     this.scrollToPosition(position);
     this.setupScrollBack();

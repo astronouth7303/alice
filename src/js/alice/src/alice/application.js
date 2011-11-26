@@ -102,12 +102,14 @@ Alice.Application = Class.create({
       return;
     }
 
+    var position = win.captureScrollPosition();
     a.update(data.title);
     a.insert({
       after: '<sup class="external"><a target="_blank" href="'+data.url+'">'
              +data.provider_name+'</a></sup>'
     });
     a.up("div.msg").insert(elem);
+    win.scrollToPosition(position);
 
     a.observe('click', function(e) {
       e.stop();
@@ -151,7 +153,9 @@ Alice.Application = Class.create({
           }
         }
       }
-      win.updateNicks(action.nicks);
+      else {
+        win.enable();
+      }
     },
     part: function (action) {
       this.closeWindow(action['window'].id);
@@ -174,14 +178,8 @@ Alice.Application = Class.create({
       this.activeWindow().announce(action['body']);
     },
     connect: function (action) {
-      action.windows.each(function (win_info) {
-        var win = this.getWindow(win_info.id);
-        if (win) {
-          win.enable();
-        }
-      }.bind(this));
       if ($('servers')) {
-        Alice.connections.connectServer(action.session);
+        Alice.connections.connectServer(action.network);
       }
     },
     disconnect: function (action) {
@@ -192,7 +190,7 @@ Alice.Application = Class.create({
         }
       }.bind(this));
       if ($('servers')) {
-        Alice.connections.disconnectServer(action.session);
+        Alice.connections.disconnectServer(action.network);
       }
     },
     focus: function (action) {
@@ -376,14 +374,14 @@ Alice.Application = Class.create({
       var pos = win.getTabPosition();
 
       if (pos.left) {
-        var classes = win.status_class();
-        left.addClassName(classes);
-        left_menu.innerHTML += sprintf('<li rel="%s" class="%s"><span>%s</span></a>', win.id, classes, win.title)
+        var classes = win.statuses;
+        classes.each(function(c){left.addClassName(c)});
+        left_menu.innerHTML += sprintf('<li rel="%s" class="%s">%s</a>', win.id, classes.join(" "), win.title)
       }
       else if (pos.right) {
-        var classes = win.status_class();
-        right.addClassName(classes);
-        right_menu.innerHTML += sprintf('<li rel="%s" class="%s"><span>%s</span></a>', win.id, classes, win.title)
+        var classes = win.statuses;
+        classes.each(function(c){right.addClassName(c)});
+        right_menu.innerHTML += sprintf('<li rel="%s" class="%s">%s</a>', win.id, classes.join(" "), win.title)
       }
 
     }.bind(this));

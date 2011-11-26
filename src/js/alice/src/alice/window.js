@@ -193,6 +193,16 @@ Alice.Window = Class.create({
     this.element.addClassName('active');
     this.tab.addClassName('active');
 
+    // focusing an already focused window can make the
+    // scroll position jump to its position from its last
+    // unfocus. doh.
+    if (!this.active) {
+      setTimeout(function(){
+        this.scrollToPosition(this.lastScrollPosition);
+        this.setupScrollBack();
+      }.bind(this), 0);
+    }
+
     this.active = true;
 
     this.application.setSource(this.id);
@@ -209,9 +219,6 @@ Alice.Window = Class.create({
 
     this.application.displayTopic(this.topic);
     document.title = this.title;
-
-    this.scrollToPosition(this.lastScrollPosition);
-    this.setupScrollBack();
     return this;
   },
 
@@ -232,16 +239,11 @@ Alice.Window = Class.create({
 
   markUnread: function(classname) {
     var classes = ["unread"];
-    if (classname && classname != "unread") classes.push(classname);
+    if (classname) classes.push(classname);
 
+    classes.each(function(c){this.tab.addClassName(c)}.bind(this));
+    this.application.highlightChannelSelect(this.id, classes);
     this.statuses = classes;
-    this.tab.addClassName(this.status_class());
-
-    this.application.highlightChannelSelect(this.id, this.status_class());
-  },
-
-  status_class: function() {
-    return this.statuses.join(" ");
   },
   
   disable: function () {
@@ -275,7 +277,7 @@ Alice.Window = Class.create({
 
   announce: function (message) {
     this.messages.insert(
-      "<li class='message announce'><div class='msg'>"+message+"</div></li>"
+      "<li class='message monospaced announce'><div class='msg'>"+message+"</div></li>"
     );
     this.scrollToPosition(0);
   },
@@ -297,15 +299,18 @@ Alice.Window = Class.create({
     if (chunk['range'][0] > this.msgid) {
       this.messages.insert({"bottom": chunk['html']});
       this.trimMessages();
-      var last = chunk['range'][1];
+      this.msgid = chunk['range'][1];
     }
     else {
+      this.bulk_insert = true;
       this.messages.insert({"top": chunk['html']});
     }
 
     this.messages.select("li:not(.filtered)").each(function (li) {
       this.application.applyFilters(li, this);
     }.bind(this));
+
+    this.bulk_insert = false;
 
     this.scrollToPosition(position);
     this.setupScrollBack();

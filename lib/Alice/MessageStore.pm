@@ -20,7 +20,13 @@ has backlog => (
   default => 5000,
 );
 
-has [qw/insert_t trim_t/] => (is => 'rw');
+has 'trim_timer' => (
+  is => 'ro',
+  default => sub {
+    my $self = shift;
+    AE::timer 60, 60, sub{$self->do_trim};
+  }
+);
 
 has dsn => (
   is => 'ro',
@@ -32,17 +38,7 @@ has dbi => (
   lazy => 1,
   default => sub {
     my $self = shift;
-    my $dbi = AnyEvent::DBI->new(@{$self->dsn});
-    $dbi->exec("SELECT msgid FROM window_buffer ORDER BY msgid DESC LIMIT 1", sub {
-      my (undef, $row) = @_;
-      if (@$row) {
-        $self->msgid($row->[0][0]);
-      }
-      else {
-        $self->msgid(0);
-      }
-    });
-    $dbi;
+    AnyEvent::DBI->new(@{$self->dsn});
   }
 );
 
@@ -51,6 +47,14 @@ has msgid => (
   default => 0,
 );
 
+sub BUILD {
+  my $self = shift;
+  $self->dbi->exec("SELECT msgid FROM window_buffer ORDER BY msgid DESC LIMIT 1", sub {
+    my (undef, $row) = @_;
+    $self->msgid( @$row ? $row->[0][0] : 0);
+  });
+}
+
 sub clear {
   my ($self, $id) = @_;
   $self->dbi->exec("DELETE FROM window_buffer WHERE window_id = ?", $id, sub {});
@@ -58,42 +62,23 @@ sub clear {
 
 sub messages {
   my ($self, $id, $max, $min, $limit, $cb) = @_;
+
   $self->dbi->exec(
-    "SELECT message FROM window_buffer WHERE window_id=? AND msgid <= ? AND msgid >= ? ORDER BY msgid DESC LIMIT ?",
-    $id, $max, $min, $limit, sub {
-      $cb->([map {decode_json $_->[0]} reverse @{$_[1]}]);
-    }
+    "SELECT message FROM window_buffer WHERE window_id=? " .
+    "AND msgid <= ? AND msgid >= ? ORDER BY msgid DESC LIMIT ?",
+    $id, $max, $min, $limit,
+    sub { $cb->([map {decode_json $_->[0]} reverse @{$_[1]}]) }
   );
 }
 
 sub add {
   my ($self, $id, $message) = @_;
 
-  # collect inserts for one second
-  push @{$self->insert}, [$id, $message->{msgid}, encode_json($message)];
+  $self->dbi->exec(
+    "INSERT INTO window_buffer (window_id,msgid,message) VALUES (?,?,?)",
+    $id, $message->{msgid}, encode_json($message), sub {});
+
   $self->trim->{$id} = 1;
-
-  if (!$self->insert_t) {
-    $self->insert_t(AE::timer 1, 0, sub{$self->do_insert});
-  }
-}
-
-sub do_insert {
-  my $self = shift;
-
-  my $idle_w; $idle_w = AE::idle sub {
-    if (my $row = shift @{$self->insert}) {
-      $self->dbi->exec("INSERT INTO window_buffer (window_id, msgid, message) VALUES (?,?,?)", @$row, sub{});
-    }
-    else {
-      undef $idle_w;
-      $self->insert_t(undef);
-    }
-  };
-  
-  if (!$self->trim_t) {
-    $self->trim_t(AE::timer 60, 0, sub{$self->do_trim});
-  }
 }
 
 sub do_trim {
@@ -108,7 +93,6 @@ sub do_trim {
     }
     else {
       undef $idle_w;
-      $self->trim_t(undef);
     }
   };
 }
