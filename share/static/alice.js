@@ -10708,6 +10708,23 @@ Alice.Application = Class.create({
     this.connection.requestChunk(win.id, limit, max);
   },
 
+  hideLoading: function() {
+    var loading = $('loading');
+    loading.setStyle({opacity: 0});
+    var end = function () {
+      loading.hide();
+      loading.stopObserving();
+    };
+    loading.observe("webkitTransitionEnd", end);
+    loading.observe("transitionend", end);
+  },
+
+  showLoading: function() {
+    var loading = $('loading');
+    loading.show();
+    loading.setStyle({opacity: 1});
+  },
+
   fetchOembeds: function(cb) {
     var req = new XMLHttpRequest();
     req.open("GET", "https://noembed.com/providers");
@@ -11411,7 +11428,7 @@ Alice.Application = Class.create({
 
     $('config_menu').on(click, ".dropdown li", function(e,li) {
       e.stop();
-      var text = li.innerText;
+      var text = li.textContent;
 
       if (text.match(/Help/)) {
         this.toggleHelp();
@@ -11997,6 +12014,7 @@ Alice.Window = Class.create({
           first = this.msgid;
         }
         clearInterval(this.scrollListener);
+        this.application.showLoading();
         this.application.getBacklog(this, first, this.chunkSize);
       }
     }.bind(this), 1000);
@@ -12174,6 +12192,7 @@ Alice.Window = Class.create({
   },
 
   announce: function (message) {
+    message = message.escapeHTML();
     this.messages.insert(
       "<li class='message monospaced announce'><div class='msg'>"+message+"</div></li>"
     );
@@ -12186,6 +12205,8 @@ Alice.Window = Class.create({
 
   addChunk: function(chunk) {
     if (chunk.nicks) this.updateNicks(chunk.nicks);
+
+    this.application.hideLoading();
 
     if (chunk.range.length == 0) {
       clearInterval(this.scrollListener);
@@ -13265,4 +13286,6 @@ if (window == window.parent) {
       ]);
     }
   });
+
+  setInterval(function(){new Ajax.Request("/say")}, 1000 * 60 * 5);
 }

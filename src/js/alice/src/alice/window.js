@@ -95,6 +95,7 @@ Alice.Window = Class.create({
           first = this.msgid;
         }
         clearInterval(this.scrollListener);
+        this.application.showLoading();
         this.application.getBacklog(this, first, this.chunkSize);
       }
     }.bind(this), 1000);
@@ -276,6 +277,7 @@ Alice.Window = Class.create({
   },
 
   announce: function (message) {
+    message = message.escapeHTML();
     this.messages.insert(
       "<li class='message monospaced announce'><div class='msg'>"+message+"</div></li>"
     );
@@ -288,6 +290,8 @@ Alice.Window = Class.create({
 
   addChunk: function(chunk) {
     if (chunk.nicks) this.updateNicks(chunk.nicks);
+
+    this.application.hideLoading();
 
     if (chunk.range.length == 0) {
       clearInterval(this.scrollListener);

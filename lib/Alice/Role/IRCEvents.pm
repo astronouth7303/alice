@@ -17,10 +17,11 @@ sub build_events {
     map {
       my $event = $_;
       $event => sub {
-        shift; # we don't need the client
+        my @args = @_; # we don't need the client
+        shift @args;
         AE::log trace => "$event event for " . $irc->name;
         try {
-          $EVENTS{$event}->($self, $irc, @_);
+          $EVENTS{$event}->($self, $irc, @args);
         }
         catch {
           AE::log debug => "Error in $event: $_";
@@ -61,7 +62,6 @@ irc_event connect => sub {
   }
 
   $self->send_info($irc->name, "connected");
-  $irc->reset_reconnect_count;
   $irc->connect_time(time);
 
   $self->broadcast({
@@ -81,6 +81,7 @@ irc_event registered => sub {
   my ($self, $irc) = @_;
   my $config = $self->config->servers->{$irc->name};
 
+  $irc->reset_reconnect_count;
   $irc->cl->{connected} = 1; # AE::IRC seems broken here...
 
   my @commands = ();
@@ -325,7 +326,7 @@ irc_event 401 => sub {
   }
 };
 
-irc_event 'join' => sub {
+irc_event join => sub {
   my ($self, $irc, $nick, $channel, $is_self) = @_;
 
   if ($is_self) {
@@ -337,34 +338,56 @@ irc_event 'join' => sub {
     );
     $irc->send_srv("WHO" => $channel) if $irc->cl->isupport("UHNAMES");
   }
+};
 
-  elsif (my $window = $self->find_window($channel, $irc)) {
-    return if $self->is_ignore("join" => $channel);
-    $irc->send_srv("WHO" => $nick) unless $irc->nick_avatar($nick);
+irc_event channel_add => sub {
+  my ($self, $irc, $msg, $channel, @nicks) = @_;
+
+  if (my $window = $self->find_window($channel, $irc)) {
     $self->broadcast(
-      $window->format_event("joined", $nick),
-      $window->nicks_action($irc->channel_nicks($channel)),
+      $window->nicks_action($irc->channel_nicks($channel))
     );
+
+    unless ($self->is_ignore("join" => $channel)) {
+      $self->broadcast(
+        map {$window->format_event("joined", $_)} @nicks
+      );
+    }
+
+    for my $nick (@nicks) {
+      $irc->send_srv("WHO" => $nick) unless $irc->nick_avatar($nick);
+    }
   }
 };
 
 irc_event part => sub {
   my ($self, $irc, $nick, $channel, $is_self, $msg) = @_;
 
-  return if $self->is_ignore(part => $channel);
-
-  my $window = $self->find_window($channel, $irc);
-  return unless $window;
-
-  if ($is_self) {
+  if ($is_self and my $window = $self->find_window($channel, $irc)) {
     $self->send_info($irc->name, "leaving $channel");
     $self->close_window($window);
   }
-  else {
+};
+
+irc_event channel_remove => sub {
+  my ($self, $irc, $msg, $channel, @nicks) = @_;
+
+  if (my $window = $self->find_window($channel, $irc)) {
     $self->broadcast(
-      $window->nicks_action($irc->channel_nicks($channel)),
-      $window->format_event("left", $nick, $msg),
+      $window->nicks_action($irc->channel_nicks($channel))
     );
+
+    unless ($self->is_ignore(part => $channel)) {
+      my $reason = "";
+
+      if ($msg and $msg->{command} eq "QUIT") {
+        $reason = "Quit: $msg->{params}[-1]";
+      }
+
+      $self->broadcast(
+        map {$window->format_event(left => $_, $reason)} @nicks
+      );
+    }
   }
 };
 

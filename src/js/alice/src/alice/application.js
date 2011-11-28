@@ -52,6 +52,23 @@ Alice.Application = Class.create({
     this.connection.requestChunk(win.id, limit, max);
   },
 
+  hideLoading: function() {
+    var loading = $('loading');
+    loading.setStyle({opacity: 0}); 
+    var end = function () {
+      loading.hide();
+      loading.stopObserving();
+    };
+    loading.observe("webkitTransitionEnd", end);
+    loading.observe("transitionend", end);
+  },
+
+  showLoading: function() {
+    var loading = $('loading');
+    loading.show();
+    loading.setStyle({opacity: 1});
+  },
+
   fetchOembeds: function(cb) {
     var req = new XMLHttpRequest();
     req.open("GET", "https://noembed.com/providers");
@@ -758,7 +775,7 @@ Alice.Application = Class.create({
 
     $('config_menu').on(click, ".dropdown li", function(e,li) {
       e.stop();
-      var text = li.innerText;
+      var text = li.textContent;
 
       if (text.match(/Help/)) {
         this.toggleHelp();
