@@ -38,7 +38,7 @@ sub match_irc_command {
 
   for my $name (keys %COMMANDS) {
 
-    if ($line =~ m{^/$name\b\s*(.*)}) {
+    if ($line =~ m{^/$name\b\s?(.*)}) {
       my $args = $1;
       return ($name, $args);
     }
@@ -60,7 +60,7 @@ sub run_irc_command {
   my $network = $req->window->network;
 
   # determine the network can be overridden
-  if ($command->{network} and $args =~ s/^$SRVOPT//) {
+  if ($command->{network} and $args =~ s/^\s*$SRVOPT//) {
     $network = $1;
   }
 
@@ -117,7 +117,7 @@ command say => {
   },
 };
 
-command msg => {
+command qr{msg|query|q} => {
   name => "msg",
   opts => qr{(\S+)\s*(.*)},
   eg => "/MSG [-<network>] <nick> [<msg>]",
@@ -434,23 +434,6 @@ command invite =>  {
   },
 };
 
-command qr{avatar|realname} => {
-  name => 'avatar',
-  eg => "/AVATAR [-<network>] <image-url>",
-  connection => 1,
-  network => 1,
-  desc => "Changes your avatar. Requires a reconnect on most servers.",
-  opts => qr{(\S+)},
-  cb => sub {
-    my ($self, $req, $opts) = @_;
-
-    my $url = $opts->[0];
-
-    $req->irc->update_realname($url);
-    $req->reply("realname changed to $url");
-  }
-};
-
 command help => {
   name => 'help',
   eg => "/HELP [<command>]",
@@ -487,6 +470,19 @@ command chunk => {
     my $window = $req->window;
 
     $self->update_window($req->stream, $window, $opts->[1], 0, $opts->[0], 0);
+  }
+};
+
+command trim => {
+  name => 'trim',
+  eg => "/TRIM [<number>]",
+  desc => "Trims the current tab to <number> of lines. Defaults to 50.",
+  window => 1,
+  opts => qr{(\d+)?},
+  cb => sub {
+    my ($self, $req, $opts) = @_;
+    my $lines = $opts->[0] || 50;
+    $req->stream->send($req->window->trim_action($lines));
   }
 };
 

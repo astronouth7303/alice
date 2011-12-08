@@ -10,12 +10,15 @@ Alice.Application = Class.create({
     this.nicklist = $('nicklist');
     this.overlayVisible = false;
     this.lastnotify = 0;
-    this.topic_height = "14px";
+    this.topic_height = this.topic.getStyle("height");
     this.beep = new Audio("/static/beep.mp3");
 
     this.oembeds = [];
     this.jsonp_callbacks = {};
-    this.connection = window.WebSocket ? new Alice.Connection.WebSocket(this) : new Alice.Connection.XHR(this);
+
+    this.connection = window.WebSocket && !window.location.search.match(/&?stream=xhr/) ?
+      new Alice.Connection.WebSocket(this)
+      : new Alice.Connection.XHR(this);
 
     this.tabs_width = $('tabs_container').getWidth();
     this.tabs_layout = this.tabs.getLayout();
@@ -52,39 +55,20 @@ Alice.Application = Class.create({
     this.connection.requestChunk(win.id, limit, max);
   },
 
-  hideLoading: function() {
-    var loading = $('loading');
-    loading.setStyle({opacity: 0}); 
-    var end = function () {
-      loading.hide();
-      loading.stopObserving();
-    };
-    loading.observe("webkitTransitionEnd", end);
-    loading.observe("transitionend", end);
-  },
-
-  showLoading: function() {
-    var loading = $('loading');
-    loading.show();
-    loading.setStyle({opacity: 1});
-  },
-
   fetchOembeds: function(cb) {
-    var req = new XMLHttpRequest();
-    req.open("GET", "https://noembed.com/providers");
-    req.onreadystatechange = function(){
-      if (req.readyState == 4) {
-        try {
-          var providers = req.responseText.evalJSON();
-          this.oembeds = providers.inject([], function(acc, site){
-            return acc.concat(site.patterns.map(function(pat){return new RegExp(pat)}));
-          });
-        } catch (e) {}
-        setTimeout(this.fetchOembeds.bind(this), 1000 * 60 * 5);
+    this.getJSON("https://noembed.com/providers", function(response) {
+      try {
+        var providers = response.evalJSON();
+        this.oembeds = providers.inject([], function(acc, site){
+          return acc.concat(site.patterns.map(function(pat){return new RegExp(pat)}));
+        });
+        if (cb) cb();
+      } catch (e) {
         if (cb) cb();
       }
-    }.bind(this);
-    req.send();
+    }.bind(this));
+
+    setTimeout(this.fetchOembeds.bind(this), 1000 * 60 * 5);
   },
 
   embed: function(a, win) {
@@ -92,15 +76,32 @@ Alice.Application = Class.create({
       url: a.href,
       maxheight: 300,
     };
-    var req = new XMLHttpRequest();
-    req.open("GET", "https://www.noembed.com/embed?" + Object.toQueryString(params));
-    req.onreadystatechange = function(){
-      if (req.readyState == 4) {
-        var data = req.responseText.evalJSON();
-        this.embedContent(a, win, data);
-      }
-    }.bind(this);
-    req.send();
+    var url = "https://www.noembed.com/embed?" + Object.toQueryString(params);
+    this.getJSON(url, function(response) {
+      var data = response.evalJSON();
+      this.embedContent(a, win, data);
+    }.bind(this));
+  },
+
+  getJSON: function(url, handler) {
+    if ("XDomainRequest" in window) {
+      var req = new XDomainRequest();
+      req.open("GET", url);
+      req.onload = function() {
+        handler(req.responseText);
+      };
+      req.send();
+    }
+    else {
+      var req = new XMLHttpRequest();
+      req.open("GET", url);
+      req.onreadystatechange = function(){
+        if (req.readyState == 4) {
+          handler(req.responseText);
+        }
+      };
+      req.send();
+    }
   },
 
   embedContent: function(a, win, data) {
@@ -177,6 +178,13 @@ Alice.Application = Class.create({
     part: function (action) {
       this.closeWindow(action['window'].id);
     },
+    trim: function (action) {
+      var win = this.getWindow(action['window'].id);
+      if (win) {
+        win.messageLimit = action['lines'];
+        win.trimMessages();
+      }
+    },
     nicks: function (action) {
       var win = this.getWindow(action['window'].id);
       if (win) win.updateNicks(action.nicks);
@@ -186,10 +194,7 @@ Alice.Application = Class.create({
     },
     clear: function (action) {
       var win = this.getWindow(action['window'].id);
-      if (win) {
-        win.messages.update("");
-        win.lastNick = "";
-      }
+      if (win) win.clearMessages();
     },
     announce: function (action) {
       this.activeWindow().announce(action['body']);
@@ -200,12 +205,11 @@ Alice.Application = Class.create({
       }
     },
     disconnect: function (action) {
-      action.windows.each(function (win_info) {
-        var win = this.getWindow(win_info.id);
-        if (win) {
+      var windows = this.windows().map(function(win) {
+        if (win.network == action['network']) {
           win.disable();
         }
-      }.bind(this));
+      });
       if ($('servers')) {
         Alice.connections.disconnectServer(action.network);
       }
@@ -393,12 +397,12 @@ Alice.Application = Class.create({
       if (pos.left) {
         var classes = win.statuses;
         classes.each(function(c){left.addClassName(c)});
-        left_menu.innerHTML += sprintf('<li rel="%s" class="%s">%s</a>', win.id, classes.join(" "), win.title)
+        left_menu.innerHTML += sprintf('<li rel="%s" class="%s"><span>%s</span></a>', win.id, classes.join(" "), win.title)
       }
       else if (pos.right) {
         var classes = win.statuses;
         classes.each(function(c){right.addClassName(c)});
-        right_menu.innerHTML += sprintf('<li rel="%s" class="%s">%s</a>', win.id, classes.join(" "), win.title)
+        right_menu.innerHTML += sprintf('<li rel="%s" class="%s"><span>%s</span></a>', win.id, classes.join(" "), win.title)
       }
 
     }.bind(this));
@@ -625,17 +629,21 @@ Alice.Application = Class.create({
   },
 
   ready: function() {
-    this.fetchOembeds(function() {
-      this.connection.connect();
+    this.freeze();
+    setTimeout(this.updateOverflowMenus.bind(this), 1000);
 
-      // required due to browser weirdness with scrolltobottom on initial focus
-      setTimeout(function(){
+    if (this.isMobile) {
+      this.connection.connect(function() {
         this.focusHash() || this.activeWindow().focus();
-        this.activeWindow().scrollToPosition(0)
-        this.freeze();
-        setTimeout(this.updateOverflowMenus.bind(this), 1000);
-      }.bind(this), 10);
-    }.bind(this));
+      }.bind(this));
+    }
+    else {
+      this.fetchOembeds(function() {
+        this.connection.connect(function() {
+          this.focusHash() || this.activeWindow().focus();
+        }.bind(this));
+      }.bind(this));
+    }
   },
 
   log: function () {
@@ -756,6 +764,7 @@ Alice.Application = Class.create({
 
   setupTopic: function() {
     this.topic.observe(this.supportsTouch ? "touchstart" : "click", function(e) {
+      if (e.findElement("a")) return;
       if (this.supportsTouch) e.stop();
       if (this.topic.getStyle("height") == this.topic_height) {
         this.topic.setStyle({height: "auto"});

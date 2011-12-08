@@ -14,12 +14,11 @@ Alice.Connection.XHR = Class.create(Alice.Connection, {
     this.reconnecting = false;
   },
 
-  _connect: function() {
+  _connect: function(cb) {
     setTimeout(function () {
     var now = new Date();
     this.application.log("opening new xhr stream");
     this.changeStatus("ok");
-    this.connected = true;
     this.request = new Ajax.Request('/stream', {
       method: 'get',
       parameters: {
@@ -31,7 +30,13 @@ Alice.Connection.XHR = Class.create(Alice.Connection, {
       on502: this.gotoLogin,
       on503: this.gotoLogin,
       onException: this.handleException.bind(this),
-      onInteractive: this.handleUpdate.bind(this),
+      onInteractive: function(transport) {
+        if (!this.connected) {
+          this.connected = true;
+          setTimeout(cb, 0);
+        }
+        this.handleUpdate(transport);
+      }.bind(this),
       onComplete: this.handleComplete.bind(this)
     });
     }.bind(this), this.application.loadDelay);
@@ -93,12 +98,12 @@ Alice.Connection.XHR = Class.create(Alice.Connection, {
     var params;
     if (form.nodeName && form.nodeName == "FORM") {
       params = Form.serialize(form);
+      params += "&stream="+this.id;
     }
     else {
       params = form;
+      params['stream'] = this.id;
     }
-
-    params['stream'] = this.id;
 
     new Ajax.Request('/say', {
       method: 'post',

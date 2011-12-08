@@ -23,7 +23,7 @@ use Alice::Request;
 use Alice::MessageBuffer;
 use Alice::MessageStore;
 
-our $VERSION = '0.19';
+our $VERSION = '0.20';
 
 with 'Alice::Role::Commands';
 with 'Alice::Role::IRCEvents';
@@ -253,7 +253,7 @@ sub create_window {
   );
   if ($window->is_channel) {
     my $config = $self->config->servers->{$window->network};
-    $config->{channels} = [uniq $title, @{$config->{channels}}];
+    $config->{channels} = [uniq lc($title), @{$config->{channels}}];
     $self->config->write;
   }
   $self->add_window($window);
@@ -309,7 +309,7 @@ sub close_window {
   if ($window->is_channel) {
     my $irc = $self->get_irc($window->network);
     my $config = $self->config->servers->{$window->network};
-    $config->{channels} = [grep {$_ ne $window->title} @{$config->{channels}}];
+    $config->{channels} = [grep {lc $_ ne lc $window->title} @{$config->{channels}}];
     $self->config->write;
   }
 
@@ -395,6 +395,7 @@ sub send_message {
 
 sub send_info {
   my ($self, $network, $body, %options) = @_;
+  return unless $body;
   my $message = $self->info_window->format_message($network, $body, %options);
   $self->broadcast($message);
 }
@@ -454,7 +455,7 @@ sub handle_message {
     $message->{msg} = html_to_irc($message->{msg}) if $message->{html};
 
     for my $line (split /\n/, $message->{msg}) {
-      next unless $line;
+      next unless length $line;
 
       my $input = Alice::Request->new(
         window => $window,

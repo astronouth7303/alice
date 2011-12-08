@@ -219,7 +219,6 @@ sub setup_xhr_stream {
 
   $res->headers([@Alice::HTTP::Stream::XHR::headers]);
   my $stream = Alice::HTTP::Stream::XHR->new(
-    queue      => [ map({$_->join_action} $app->windows) ],
     writer     => $res->writer,
     start_time => $req->param('t'),
     # android requires 4K updates to trigger loading event
@@ -227,7 +226,7 @@ sub setup_xhr_stream {
     on_error => sub { $app->purge_disconnects },
   );
 
-  #$stream->send([$app->connect_actions]);
+  $stream->send([$app->connect_actions]);
   $app->add_stream($stream);
 }
 
@@ -319,9 +318,9 @@ sub merged_options {
   my $config = $self->app->config;
 
   my $options = { map { $_ => ($req->param($_) || $config->$_) }
-      qw/images avatars alerts audio timeformat image_prefix/ };
+      qw/animate images avatars alerts audio timeformat image_prefix/ };
 
-  if ($options->{images} eq "show" and $config->animate eq "hide") {
+  if ($options->{images} eq "show" and $options->{animate} eq "hide") {
     $options->{image_prefix} = "https://noembed.com/i/still/";
   }
 

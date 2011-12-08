@@ -10667,12 +10667,15 @@ Alice.Application = Class.create({
     this.nicklist = $('nicklist');
     this.overlayVisible = false;
     this.lastnotify = 0;
-    this.topic_height = "14px";
+    this.topic_height = this.topic.getStyle("height");
     this.beep = new Audio("/static/beep.mp3");
 
     this.oembeds = [];
     this.jsonp_callbacks = {};
-    this.connection = window.WebSocket ? new Alice.Connection.WebSocket(this) : new Alice.Connection.XHR(this);
+
+    this.connection = window.WebSocket && !window.location.search.match(/&?stream=xhr/) ?
+      new Alice.Connection.WebSocket(this)
+      : new Alice.Connection.XHR(this);
 
     this.tabs_width = $('tabs_container').getWidth();
     this.tabs_layout = this.tabs.getLayout();
@@ -10708,39 +10711,20 @@ Alice.Application = Class.create({
     this.connection.requestChunk(win.id, limit, max);
   },
 
-  hideLoading: function() {
-    var loading = $('loading');
-    loading.setStyle({opacity: 0});
-    var end = function () {
-      loading.hide();
-      loading.stopObserving();
-    };
-    loading.observe("webkitTransitionEnd", end);
-    loading.observe("transitionend", end);
-  },
-
-  showLoading: function() {
-    var loading = $('loading');
-    loading.show();
-    loading.setStyle({opacity: 1});
-  },
-
   fetchOembeds: function(cb) {
-    var req = new XMLHttpRequest();
-    req.open("GET", "https://noembed.com/providers");
-    req.onreadystatechange = function(){
-      if (req.readyState == 4) {
-        try {
-          var providers = req.responseText.evalJSON();
-          this.oembeds = providers.inject([], function(acc, site){
-            return acc.concat(site.patterns.map(function(pat){return new RegExp(pat)}));
-          });
-        } catch (e) {}
-        setTimeout(this.fetchOembeds.bind(this), 1000 * 60 * 5);
+    this.getJSON("https://noembed.com/providers", function(response) {
+      try {
+        var providers = response.evalJSON();
+        this.oembeds = providers.inject([], function(acc, site){
+          return acc.concat(site.patterns.map(function(pat){return new RegExp(pat)}));
+        });
+        if (cb) cb();
+      } catch (e) {
         if (cb) cb();
       }
-    }.bind(this);
-    req.send();
+    }.bind(this));
+
+    setTimeout(this.fetchOembeds.bind(this), 1000 * 60 * 5);
   },
 
   embed: function(a, win) {
@@ -10748,15 +10732,32 @@ Alice.Application = Class.create({
       url: a.href,
       maxheight: 300,
     };
-    var req = new XMLHttpRequest();
-    req.open("GET", "https://www.noembed.com/embed?" + Object.toQueryString(params));
-    req.onreadystatechange = function(){
-      if (req.readyState == 4) {
-        var data = req.responseText.evalJSON();
-        this.embedContent(a, win, data);
-      }
-    }.bind(this);
-    req.send();
+    var url = "https://www.noembed.com/embed?" + Object.toQueryString(params);
+    this.getJSON(url, function(response) {
+      var data = response.evalJSON();
+      this.embedContent(a, win, data);
+    }.bind(this));
+  },
+
+  getJSON: function(url, handler) {
+    if ("XDomainRequest" in window) {
+      var req = new XDomainRequest();
+      req.open("GET", url);
+      req.onload = function() {
+        handler(req.responseText);
+      };
+      req.send();
+    }
+    else {
+      var req = new XMLHttpRequest();
+      req.open("GET", url);
+      req.onreadystatechange = function(){
+        if (req.readyState == 4) {
+          handler(req.responseText);
+        }
+      };
+      req.send();
+    }
   },
 
   embedContent: function(a, win, data) {
@@ -10833,6 +10834,13 @@ Alice.Application = Class.create({
     part: function (action) {
       this.closeWindow(action['window'].id);
     },
+    trim: function (action) {
+      var win = this.getWindow(action['window'].id);
+      if (win) {
+        win.messageLimit = action['lines'];
+        win.trimMessages();
+      }
+    },
     nicks: function (action) {
       var win = this.getWindow(action['window'].id);
       if (win) win.updateNicks(action.nicks);
@@ -10842,10 +10850,7 @@ Alice.Application = Class.create({
     },
     clear: function (action) {
       var win = this.getWindow(action['window'].id);
-      if (win) {
-        win.messages.update("");
-        win.lastNick = "";
-      }
+      if (win) win.clearMessages();
     },
     announce: function (action) {
       this.activeWindow().announce(action['body']);
@@ -10856,12 +10861,11 @@ Alice.Application = Class.create({
       }
     },
     disconnect: function (action) {
-      action.windows.each(function (win_info) {
-        var win = this.getWindow(win_info.id);
-        if (win) {
+      var windows = this.windows().map(function(win) {
+        if (win.network == action['network']) {
           win.disable();
         }
-      }.bind(this));
+      });
       if ($('servers')) {
         Alice.connections.disconnectServer(action.network);
       }
@@ -11049,12 +11053,12 @@ Alice.Application = Class.create({
       if (pos.left) {
         var classes = win.statuses;
         classes.each(function(c){left.addClassName(c)});
-        left_menu.innerHTML += sprintf('<li rel="%s" class="%s">%s</a>', win.id, classes.join(" "), win.title)
+        left_menu.innerHTML += sprintf('<li rel="%s" class="%s"><span>%s</span></a>', win.id, classes.join(" "), win.title)
       }
       else if (pos.right) {
         var classes = win.statuses;
         classes.each(function(c){right.addClassName(c)});
-        right_menu.innerHTML += sprintf('<li rel="%s" class="%s">%s</a>', win.id, classes.join(" "), win.title)
+        right_menu.innerHTML += sprintf('<li rel="%s" class="%s"><span>%s</span></a>', win.id, classes.join(" "), win.title)
       }
 
     }.bind(this));
@@ -11279,16 +11283,21 @@ Alice.Application = Class.create({
   },
 
   ready: function() {
-    this.fetchOembeds(function() {
-      this.connection.connect();
+    this.freeze();
+    setTimeout(this.updateOverflowMenus.bind(this), 1000);
 
-      setTimeout(function(){
+    if (this.isMobile) {
+      this.connection.connect(function() {
         this.focusHash() || this.activeWindow().focus();
-        this.activeWindow().scrollToPosition(0)
-        this.freeze();
-        setTimeout(this.updateOverflowMenus.bind(this), 1000);
-      }.bind(this), 10);
-    }.bind(this));
+      }.bind(this));
+    }
+    else {
+      this.fetchOembeds(function() {
+        this.connection.connect(function() {
+          this.focusHash() || this.activeWindow().focus();
+        }.bind(this));
+      }.bind(this));
+    }
   },
 
   log: function () {
@@ -11409,6 +11418,7 @@ Alice.Application = Class.create({
 
   setupTopic: function() {
     this.topic.observe(this.supportsTouch ? "touchstart" : "click", function(e) {
+      if (e.findElement("a")) return;
       if (this.supportsTouch) e.stop();
       if (this.topic.getStyle("height") == this.topic_height) {
         this.topic.setStyle({height: "auto"});
@@ -11585,7 +11595,7 @@ Alice.Connection = {
     window.location = "/login";
   },
 
-  connect: function() {
+  connect: function(cb) {
     if (this.reconnect_count > 3) {
       this.aborting = true;
       this.changeStatus("ok");
@@ -11606,7 +11616,7 @@ Alice.Connection = {
     this.reconnect_count++;
 
     this.changeStatus("loading");
-    this._connect();
+    this._connect(cb);
   },
 
   changeStatus: function(classname) {
@@ -11680,6 +11690,7 @@ Alice.Connection = {
   },
 
   requestChunk: function (win, limit, max) {
+    if (!this.connected) return;
     this.sendMessage({
       source: win,
       msg: "/chunk " + limit + " " + max,
@@ -11697,7 +11708,7 @@ Alice.Connection.WebSocket = Class.create(Alice.Connection, {
     this.reconnecting = false;
   },
 
-  _connect: function() {
+  _connect: function(cb) {
     var now = new Date();
     this.application.log("opening new websocket stream");
     this.changeStatus("ok");
@@ -11710,7 +11721,7 @@ Alice.Connection.WebSocket = Class.create(Alice.Connection, {
     this.request = new WebSocket(url);
     this.request.onopen = function(){
       this.connected = true;
-      this.application.windows().invoke("setupScrollBack");
+      setTimeout(cb, 100);
     }.bind(this);
     this.request.onmessage = this.handleUpdate.bind(this);
     this.request.onerror = this.handleException.bind(this);
@@ -11781,12 +11792,11 @@ Alice.Connection.XHR = Class.create(Alice.Connection, {
     this.reconnecting = false;
   },
 
-  _connect: function() {
+  _connect: function(cb) {
     setTimeout(function () {
     var now = new Date();
     this.application.log("opening new xhr stream");
     this.changeStatus("ok");
-    this.connected = true;
     this.request = new Ajax.Request('/stream', {
       method: 'get',
       parameters: {
@@ -11798,7 +11808,13 @@ Alice.Connection.XHR = Class.create(Alice.Connection, {
       on502: this.gotoLogin,
       on503: this.gotoLogin,
       onException: this.handleException.bind(this),
-      onInteractive: this.handleUpdate.bind(this),
+      onInteractive: function(transport) {
+        if (!this.connected) {
+          this.connected = true;
+          setTimeout(cb, 0);
+        }
+        this.handleUpdate(transport);
+      }.bind(this),
       onComplete: this.handleComplete.bind(this)
     });
     }.bind(this), this.application.loadDelay);
@@ -11860,12 +11876,12 @@ Alice.Connection.XHR = Class.create(Alice.Connection, {
     var params;
     if (form.nodeName && form.nodeName == "FORM") {
       params = Form.serialize(form);
+      params += "&stream="+this.id;
     }
     else {
       params = form;
+      params['stream'] = this.id;
     }
-
-    params['stream'] = this.id;
 
     new Ajax.Request('/say', {
       method: 'post',
@@ -11927,6 +11943,7 @@ Alice.Window = Class.create({
     this.title = serialized['title'];
     this.type = serialized['type'];
     this.hashtag = serialized['hashtag'];
+    this.network = serialized['network'];
     this.id = this.element.identify();
     this.active = false;
     this.topic = serialized['topic'];
@@ -12001,23 +12018,31 @@ Alice.Window = Class.create({
     this.messages.observe("mouseover", this.showNick.bind(this));
   },
 
-  setupScrollBack: function() {
-    clearInterval(this.scrollListener);
-    this.scrollListener = setInterval(function(){
-      if (this.active && this.element.scrollTop == 0) {
-        var first = this.messages.down("li[id]");
-        if (first) {
-          first = first.id.replace("msg-", "") - 1;
-          this.messageLimit += this.chunkSize;
-        }
-        else {
-          first = this.msgid;
-        }
-        clearInterval(this.scrollListener);
-        this.application.showLoading();
-        this.application.getBacklog(this, first, this.chunkSize);
+  checkScrollBack: function() {
+    if (this.active && this.element.scrollTop <= 150) {
+      clearInterval(this.scrollListener);
+      var first = this.messages.down("li[id]");
+      if (first) {
+        first = first.id.replace("msg-", "") - 1;
+        this.messageLimit += this.chunkSize;
       }
-    }.bind(this), 1000);
+      else {
+        first = this.msgid;
+      }
+      this.application.log("requesting chunk" + first);
+      this.tab.addClassName("loading");
+      this.application.getBacklog(this, first, this.chunkSize);
+    }
+    else {
+      clearTimeout(this.scrollListener);
+      this.scrollListener = setTimeout(this.checkScrollBack.bind(this), 1000);
+    }
+  },
+
+  clearMessages: function() {
+    clearTimeout(this.scrollListener);
+    this.messages.update("");
+    this.lastNick = "";
   },
 
   updateTabLayout: function() {
@@ -12060,7 +12085,7 @@ Alice.Window = Class.create({
     this.active = false;
     this.element.removeClassName('active');
     this.tab.removeClassName('active');
-    clearInterval(this.scrollListener);
+    clearTimeout(this.scrollListener);
     this.addFold();
   },
 
@@ -12110,17 +12135,19 @@ Alice.Window = Class.create({
     if (this != this.application.previousFocus)
       this.application.previousFocus.unFocus();
 
-    this.element.addClassName('active');
-    this.tab.addClassName('active');
-
     if (!this.active) {
+      this.active = true;
+
+      this.scrollToPosition(this.lastScrollPosition);
+
       setTimeout(function(){
         this.scrollToPosition(this.lastScrollPosition);
-        this.setupScrollBack();
+        if (!this.scrollBackEmpty) this.checkScrollBack();
       }.bind(this), 0);
     }
 
-    this.active = true;
+    this.element.addClassName('active');
+    this.tab.addClassName('active');
 
     this.application.setSource(this.id);
     this.application.displayNicks(this.nicks);
@@ -12205,11 +12232,11 @@ Alice.Window = Class.create({
 
   addChunk: function(chunk) {
     if (chunk.nicks) this.updateNicks(chunk.nicks);
-
-    this.application.hideLoading();
+    clearTimeout(this.scrollListener);
 
     if (chunk.range.length == 0) {
-      clearInterval(this.scrollListener);
+      this.scrollBackEmpty = true;
+      this.tab.removeClassName("loading");
       return;
     }
 
@@ -12232,7 +12259,8 @@ Alice.Window = Class.create({
     this.bulk_insert = false;
 
     this.scrollToPosition(position);
-    this.setupScrollBack();
+    setTimeout(function(){this.removeClassName("loading")}.bind(this.tab), 1000);
+    this.scrollListener = setTimeout(this.checkScrollBack.bind(this), 1000);
   },
 
   addMessage: function(message) {
@@ -12879,8 +12907,7 @@ Alice.Keyboard = Class.create({
   },
 
   onCmdK: function() {
-    this.activeWindow.messages.update("");
-    this.activeWindow.lastNick = "";
+    this.activeWindow.clearMessages();
     this.application.connection.sendMessage({
       msg: "/clear",
       source: this.activeWindow.id,
@@ -13106,6 +13133,7 @@ if (window == window.parent) {
 
     $$('.dropdown').each(function (menu) {
       menu.observe(alice.supportsTouch ? "touchstart" : "mousedown", function (e) {
+        e.stop();
         var element = e.element('.dropdown');
         if (element.hasClassName("dropdown")) {
           if (menu.hasClassName("open")) {
@@ -13115,7 +13143,6 @@ if (window == window.parent) {
             $$(".dropdown.open").invoke("removeClassName", "open");
             menu.addClassName("open");
           }
-          e.stop();
         }
       });
     });

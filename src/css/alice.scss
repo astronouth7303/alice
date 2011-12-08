@@ -204,12 +204,8 @@ body {
   background: $message_background;
 }
 
-a:link, a:visited, a:hover, a:active { color: $links; }
-
-a.channel {
-  color: $default_text;
-  text-decoration: none;
-}
+a:link, a:visited, a:active { color: $links; }
+a:hover { color: $links_hover }
 
 div#windows {
   position:absolute;
@@ -552,8 +548,7 @@ div#topic {
   text-align: center;
   border-top: $topic_border_top;
   border-bottom: $topic_border_bottom;
-  padding: 1px 0;
-  padding-left: 50px;
+  padding: 1px 55px;
   font-size: 11px;
   height: 15px;
   min-height: 15px;
@@ -714,14 +709,17 @@ sup.external a {
   text-shadow: 1px 1px 1px white;
   margin-left: 1px;
   font-size: 0.7em;
-  background-color: #CCC;
   border-radius: 3px;
   padding: 1px 2px 1px 3px;
   font-weight: normal;
   letter-spacing: 0;
   border-right: 1px solid #aaa;
   border-bottom: 1px solid #aaa;
+  background-color: #D1D3D3;
+}
 
+sup.external a:hover {
+  background-color: #CCC;
 }
 
 sup.external a:after {
@@ -906,13 +904,26 @@ li.channel_tab div.tab_button {
   background: url(image/sprites.png) 0px -80px no-repeat;
 }
 
+li.loading.channel_tab div.tab_button {
+  background: url(image/sprites.png) -38px -80px no-repeat;
+}
+
 li.privmsg_tab div.tab_button {
   background: url(image/sprites.png) 0px -120px no-repeat;
+}
+
+li.loading.privmsg_tab div.tab_button {
+  background: url(image/sprites.png) -38px -140px no-repeat;
 }
 
 li.info_tab div.tab_button {
   background: url(image/sprites.png) 0px 0px no-repeat;
 }
+
+li.loading.info_tab div.tab_button {
+  background: url(image/sprites.png) -39px -160px no-repeat;
+}
+
 
 ul#tabs li.disabled.channel_tab div.tab_button:hover,
 ul#tabs li.active div.tab_button:hover {
@@ -1129,6 +1140,12 @@ div.color_picker div.toggle span#bg.active {
     max-width: 150px;
     max-height: 150px;
   }
+  div#tab_menu_left ul {
+    margin-left: -24px;
+  }
+  div#tab_menu_right ul {
+    margin-right: -35px;
+  }
 }
 
 div.config {
@@ -1179,7 +1196,7 @@ div.config div.buttons {
   bottom: 0px;
   left: 0px;
   right: 0px;
-  padding: 2px 10px;
+  padding: 2px 8px;
   height: 24px;
   background: $tab_border_active;
   border: 1px solid $tab_background_active;
@@ -1509,22 +1526,4 @@ body > div.copybuffer {
   position: absolute;
   top: -500px;
   height: 1px;
-}
-
-div#loading {
-  z-index: 999;
-  position: absolute;
-  width: 100px;
-  top: 0px;
-  left: 50%;
-  margin-left: -50px;
-  text-align: center;
-  font-size: 0.8em;
-  color: $tab_text;
-  background: $message_background;
-  border: 1px solid $message_border;
-  border-top: none;
-  -moz-transition: opacity 0.75s ease-in-out;
-  -webkit-transition: opacity 0.75s ease-in-out;
-  padding: 4px;
 }

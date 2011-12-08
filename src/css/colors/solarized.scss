@@ -1,5 +1,5 @@
 $font_family: "Lucida Grande", Helvetica, sans-serif;
-$font_family_monospace: Monaco, monospace;
+$font_family_monospace: Menlo, monospace;
 
 $base03:    #002b36;
 $base02:    #073642;
@@ -22,7 +22,9 @@ $default_text: $base02;
 $nicks: $base02;
 
 $links: $base3;
+$links_hover: #E8E2D0;
 div.msg a { color: $orange; }
+div.msg a:hover { color: #B6461E }
 
 $message_background: $base3;
 $message_nick_column_background: $base2;

@@ -17,9 +17,17 @@ sub build_events {
     map {
       my $event = $_;
       $event => sub {
-        my @args = @_; # we don't need the client
-        shift @args;
+        my ($cl, @args) = @_;
+
+        if ($cl != $irc->cl) {
+          AE::log warn => "$event event on rogue AE::IRC::Client!";
+          $cl->remove_all_callbacks;
+          $cl->disconnect();
+          return;
+        }
+
         AE::log trace => "$event event for " . $irc->name;
+
         try {
           $EVENTS{$event}->($self, $irc, @args);
         }
@@ -70,11 +78,6 @@ irc_event connect => sub {
     network => $irc->name,
   });
 
-  my $config = $self->config->servers->{$irc->name};
-
-  $irc->cl->register(
-    $config->{nick}, $config->{username}, $config->{ircname}, $config->{password}
-  );
 };
 
 irc_event registered => sub {
@@ -118,23 +121,22 @@ irc_event registered => sub {
 irc_event disconnect => sub {
   my ($self, $irc, $reason) = @_;
 
-  my @windows = grep {$_->network eq $irc->name} $self->windows;
   $self->broadcast({
     type => "action",
     event => "disconnect",
     network => $irc->name,
-    windows => [map {$_->serialized} @windows],
   });
-  $self->remove_window($_) for map {$_->id} @windows;
 
   $reason = "" unless $reason;
   return if $reason eq "reconnect requested.";
   $self->send_info($irc->name, "disconnected: $reason");
   
-  # TODO - Object::Event bug that prevents object from getting destroyed
-  delete $irc->cl->{change_nick_cb_guard} if $irc->cl;
-
-  $irc->cl(undef);
+  if ($irc->cl) {
+    # TODO - Object::Event bug that prevents object from getting destroyed
+    delete $irc->cl->{change_nick_cb_guard};
+    $irc->cl->remove_all_callbacks;
+    $irc->cl(undef);
+  }
 
   $self->reconnect_irc($irc->name, 0) unless $irc->disabled;
 
@@ -160,10 +162,9 @@ irc_event privatemsg => sub {
   my ($self, $irc, $nick, $msg) = @_;
 
   my $text = $msg->{params}[1];
+  my ($from) = split_prefix($msg->{prefix});
 
   if ($msg->{command} eq "PRIVMSG") {
-    my ($from) = split_prefix($msg->{prefix});
-
     return if $self->is_ignore(msg => $from);
 
     my $window = $self->find_or_create_window($from, $irc);
@@ -171,7 +172,7 @@ irc_event privatemsg => sub {
     $irc->send_srv(WHO => $from) unless $irc->nick_avatar($from);
   }
   elsif ($msg->{command} eq "NOTICE") {
-    $self->send_info($nick, $text);
+    $self->send_info($from, $text);
   }
 };
 
@@ -216,7 +217,7 @@ irc_event 301 => sub {
 
   if (my $window = $self->find_window($from, $irc)) {
     $awaymsg = "$from is away ($awaymsg)";
-    $window->reply($awaymsg);
+    $self->announce($awaymsg);
   }
 };
 
@@ -348,14 +349,10 @@ irc_event channel_add => sub {
       $window->nicks_action($irc->channel_nicks($channel))
     );
 
-    unless ($self->is_ignore("join" => $channel)) {
+    if ($msg->{command} eq "JOIN" and !$self->is_ignore("join" => $channel)) {
       $self->broadcast(
         map {$window->format_event("joined", $_)} @nicks
       );
-    }
-
-    for my $nick (@nicks) {
-      $irc->send_srv("WHO" => $nick) unless $irc->nick_avatar($nick);
     }
   }
 };
@@ -381,7 +378,7 @@ irc_event channel_remove => sub {
       my $reason = "";
 
       if ($msg and $msg->{command} eq "QUIT") {
-        $reason = "Quit: $msg->{params}[-1]";
+        $reason = $msg->{params}[-1] || "Quit";
       }
 
       $self->broadcast(
@@ -410,19 +407,14 @@ irc_event irc_invite => sub {
   $self->announce($message);
 };
 
-irc_event 464 => sub{
+irc_event [qw/001 305 306 401 462 464 465 471 473 474 475 477 485 432 433/] => sub {
   my ($self, $irc, $msg) = @_;
-  $self->disconnect_irc($irc->name, "bad USER/PASS")
-};
-
-irc_event [qw/001 305 306 401 471 473 474 475 477 485 432 433/] => sub {
-  my ($self, $irc, $msg) = @_;
-  $self->send_info($irc->name, $msg->{params}[1]);
+  $self->send_info($irc->name, $msg->{params}[-1]);
 };
 
 irc_event [qw/372 377 378/] => sub {
   my ($self, $irc, $msg) = @_;
-  $self->send_info($irc->name, $msg->{params}[1], mono => 1);
+  $self->send_info($irc->name, $msg->{params}[-1], mono => 1);
 };
 
 sub reconnect_irc {
@@ -462,7 +454,16 @@ sub disconnect_irc {
   $irc->is_connecting(0);
   $irc->disabled(1);
   $msg ||= $self->config->quitmsg;
-  $irc->cl->disconnect($msg);
+  $irc->send_srv(QUIT => $msg);
+
+  my $cl = $irc->cl;
+  my $t; $t = AE::timer 2, 0, sub {
+    undef $t;
+    if ($cl and $cl->is_connected) {
+      $cl->remove_all_callbacks;
+      $cl->disconnect;
+    }
+  };
 }
 
 sub cancel_reconnect {
@@ -506,7 +507,12 @@ sub connect_irc {
   $self->send_info($irc->name, "connecting (attempt " . $irc->reconnect_count .")");
   
   $irc->is_connecting(1);
-  $irc->cl->connect($config->{host}, $config->{port});
+  $irc->cl->connect($config->{host}, $config->{port}, {
+    nick => $config->{nick},
+    user => $config->{user},
+    real => $config->{ircname},
+    password => $config->{password},
+  });
 }
 
 1;
