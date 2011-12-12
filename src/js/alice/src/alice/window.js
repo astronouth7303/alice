@@ -151,6 +151,7 @@ Alice.Window = Class.create({
     this.element.removeClassName('active');
     this.tab.removeClassName('active');
     clearTimeout(this.scrollListener);
+    clearTimeout(this.focusTimer);
     this.addFold();
   },
 
@@ -208,10 +209,10 @@ Alice.Window = Class.create({
 
       this.scrollToPosition(this.lastScrollPosition);
 
-      setTimeout(function(){
+      this.focusTimer = setTimeout(function(){
         this.scrollToPosition(this.lastScrollPosition);
         if (!this.scrollBackEmpty) this.checkScrollBack();
-      }.bind(this), 0);
+      }.bind(this), 400);
     }
 
     this.element.addClassName('active');
@@ -321,10 +322,14 @@ Alice.Window = Class.create({
       this.messages.insert({"top": chunk['html']});
     }
 
+    var original_timestamp = this.lasttimestamp;
+    this.lasttimestamp = new Date(0);
+
     this.messages.select("li:not(.filtered)").each(function (li) {
       this.application.applyFilters(li, this);
     }.bind(this));
 
+    this.lasttimestamp = original_timestamp;
     this.bulk_insert = false;
 
     this.scrollToPosition(position);

@@ -19,7 +19,7 @@ sub build_events {
       $event => sub {
         my ($cl, @args) = @_;
 
-        if ($cl != $irc->cl) {
+        if (!$irc->cl or $cl != $irc->cl) {
           AE::log warn => "$event event on rogue AE::IRC::Client!";
           $cl->remove_all_callbacks;
           $cl->disconnect();
@@ -333,27 +333,20 @@ irc_event join => sub {
   if ($is_self) {
     my $window = $self->find_or_create_window($channel, $irc);
     $self->broadcast(
-      $window->format_event("joined", "you"),
+      $window->format_event("join", "you"),
       $window->join_action,
       $window->nicks_action($irc->channel_nicks($channel)),
     );
     $irc->send_srv("WHO" => $channel) if $irc->cl->isupport("UHNAMES");
   }
-};
-
-irc_event channel_add => sub {
-  my ($self, $irc, $msg, $channel, @nicks) = @_;
-
-  if (my $window = $self->find_window($channel, $irc)) {
-    $self->broadcast(
-      $window->nicks_action($irc->channel_nicks($channel))
-    );
-
-    if ($msg->{command} eq "JOIN" and !$self->is_ignore("join" => $channel)) {
-      $self->broadcast(
-        map {$window->format_event("joined", $_)} @nicks
-      );
-    }
+  else {
+    my $window = $self->find_window($channel, $irc);
+    $self->queue_event({
+      irc    => $irc,
+      window => $window,
+      event  => "join",
+      nick   => $nick,
+    });
   }
 };
 
@@ -367,32 +360,26 @@ irc_event part => sub {
 };
 
 irc_event channel_remove => sub {
-  my ($self, $irc, $msg, $channel, @nicks) = @_;
+  my ($self, $irc, $msg, $channel, $nick) = @_;
 
-  if (my $window = $self->find_window($channel, $irc)) {
-    $self->broadcast(
-      $window->nicks_action($irc->channel_nicks($channel))
-    );
+  my $event = lc $msg->{command};
+  my $reason = $event eq "quit" ? $msg->{params}[-1] : "";
+  my $window = $self->find_window($channel, $irc);
 
-    unless ($self->is_ignore(part => $channel)) {
-      my $reason = "";
-
-      if ($msg and $msg->{command} eq "QUIT") {
-        $reason = $msg->{params}[-1] || "Quit";
-      }
-
-      $self->broadcast(
-        map {$window->format_event(left => $_, $reason)} @nicks
-      );
-    }
-  }
+  $self->queue_event({
+    irc    => $irc,
+    window => $window,
+    event  => $event,
+    nick   => $nick,
+    args   => $reason,
+  });
 };
 
 irc_event channel_topic => sub {
   my ($self, $irc, $channel, $topic, $nick) = @_;
   if (my $window = $self->find_window($channel, $irc)) {
     $topic = irc_to_html($topic, classes => 1, invert => "italic");
-    $window->topic({string => $topic, author => $nick, time => time});
+    $window->topic({string => $topic, author => $nick});
     $self->broadcast($window->format_event("topic", $nick, $topic));
   }
 };
@@ -412,9 +399,24 @@ irc_event [qw/001 305 306 401 462 464 465 471 473 474 475 477 485 432 433/] => s
   $self->send_info($irc->name, $msg->{params}[-1]);
 };
 
+irc_event 375 => sub {
+  my ($self, $irc, $msg) = @_;
+  $irc->{motd_buffer} = [];
+};
+
 irc_event [qw/372 377 378/] => sub {
   my ($self, $irc, $msg) = @_;
-  $self->send_info($irc->name, $msg->{params}[-1], mono => 1);
+  push @{$irc->{motd_buffer}}, $msg->{params}[-1];
+  if (@{$irc->{motd_buffer}} > 20) {
+    my $lines = delete $irc->{motd_buffer};
+    $self->send_info($irc->name, join("\n", @$lines), mono => 1, multiline => 1);
+  }
+};
+
+irc_event 376 => sub {
+  my ($self, $irc, $msg) = @_;
+  my $lines = delete $irc->{motd_buffer};
+  $self->send_info($irc->name, join("\n", @$lines), mono => 1, multiline => 1);
 };
 
 sub reconnect_irc {
@@ -513,6 +515,41 @@ sub connect_irc {
     real => $config->{ircname},
     password => $config->{password},
   });
+}
+
+sub queue_event {
+  my ($self, $event) = @_;
+
+  my $window = $event->{window};
+  my $irc    = $event->{irc};
+
+  push @{$window->{event_queue}}, [$event->{event}, $event->{nick}, $event->{args} || ""];
+
+  $window->{event_timer} ||= AE::timer 1, 0, sub {
+    delete $window->{event_timer};
+    $self->send_nicks($window);
+
+    my $queue = delete $window->{event_queue};
+    my $current = shift @$queue;
+
+    my $idle_w; $idle_w = AE::idle sub {
+      if (!$current) {
+        undef $idle_w;
+        return;
+      }
+
+      my $next = shift @$queue;
+      return if $self->is_ignore($current->[0] => $window->title);
+
+      if (!$next or $current->[0] ne $next->[0] or $current->[2] ne $next->[2]) {
+        $self->broadcast($window->format_event(@$current));
+        $current = $next;
+      }
+      else {
+        $current->[1] .= ", $next->[1]";
+      }
+    };
+  };
 }
 
 1;
