@@ -5,6 +5,11 @@ Object.extend(Alice, {
     url: /(https?:\/\/[^\s<"]*)/ig
   },
 
+  Months: ['Jan','Feb','Mar','Apr','May','June','July','Aug',
+           'Sept','Oct','Nov','Dec'],
+
+  Days: ['Sun', 'Mon','Tue','Wed','Thu','Fri','Sat'],
+
   cleanupCopy: function(node) {
     if (!node.select("li.message").length) return;
 
@@ -26,17 +31,20 @@ Object.extend(Alice, {
         clean.push(body);
       }
       if (clean.length) lines.push(
-        clean.join(" ").replace(/\n/g, "").escapeHTML());
+        clean.join(" ").replace(/\n/g, ""));
     });
     node.update(lines.join("<br>"));
     node.cleanWhitespace();
   },
 
-  epochToLocal: function(epoch, format) {
+  epochToLocal: function(epoch, format, show_date) {
     var date = new Date(parseInt(epoch) * 1000);
     if (!date) return epoch;
 
     var hours = date.getHours();
+    var prefix = show_date ?
+      sprintf("%s, %s %d, ", Alice.Days[date.getDay()], Alice.Months[date.getMonth()], date.getDate())
+      : "";
 
     if (format == "12") {
       var ap;
@@ -46,10 +54,10 @@ Object.extend(Alice, {
       } else {
         ap = "a"
       }
-      return sprintf("%d:%02d%s", hours, date.getMinutes(), ap);
+      return sprintf("%s%d:%02d%s", prefix, hours, date.getMinutes(), ap);
     }
 
-    return sprintf("%02d:%02d", hours, date.getMinutes());
+    return sprintf("%s%02d:%02d", prefix, hours, date.getMinutes());
   },
 
   makeLinksClickable: function(elem) {

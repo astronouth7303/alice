@@ -11014,6 +11014,11 @@ Object.extend(Alice, {
     url: /(https?:\/\/[^\s<"]*)/ig
   },
 
+  Months: ['Jan','Feb','Mar','Apr','May','June','July','Aug',
+           'Sept','Oct','Nov','Dec'],
+
+  Days: ['Sun', 'Mon','Tue','Wed','Thu','Fri','Sat'],
+
   cleanupCopy: function(node) {
     if (!node.select("li.message").length) return;
 
@@ -11035,17 +11040,20 @@ Object.extend(Alice, {
         clean.push(body);
       }
       if (clean.length) lines.push(
-        clean.join(" ").replace(/\n/g, "").escapeHTML());
+        clean.join(" ").replace(/\n/g, ""));
     });
     node.update(lines.join("<br>"));
     node.cleanWhitespace();
   },
 
-  epochToLocal: function(epoch, format) {
+  epochToLocal: function(epoch, format, show_date) {
     var date = new Date(parseInt(epoch) * 1000);
     if (!date) return epoch;
 
     var hours = date.getHours();
+    var prefix = show_date ?
+      sprintf("%s, %s %d, ", Alice.Days[date.getDay()], Alice.Months[date.getMonth()], date.getDate())
+      : "";
 
     if (format == "12") {
       var ap;
@@ -11055,10 +11063,10 @@ Object.extend(Alice, {
       } else {
         ap = "a"
       }
-      return sprintf("%d:%02d%s", hours, date.getMinutes(), ap);
+      return sprintf("%s%d:%02d%s", prefix, hours, date.getMinutes(), ap);
     }
 
-    return sprintf("%02d:%02d", hours, date.getMinutes());
+    return sprintf("%s%02d:%02d", prefix, hours, date.getMinutes());
   },
 
   makeLinksClickable: function(elem) {
@@ -11471,7 +11479,7 @@ Alice.Application = Class.create({
     this.supportsTouch = 'createTouch' in document;
 
     this.isPhone = window.navigator.userAgent.match(/(android|iphone|wosbrowser)/i) ? true : false;
-    this.isMobile = this.isPhone || Prototype.Browser.MobileSafari;
+    this.isMobile = window.location.toString().match(/mobile/i) || this.isPhone || Prototype.Browser.MobileSafari;
     this.loadDelay = this.isMobile ? 3000 : 1000;
     if (window.navigator.standalone || window.navigator.userAgent.match(/Fluid/)) this.loadDelay = 0;
 
@@ -11493,7 +11501,7 @@ Alice.Application = Class.create({
   },
 
   getBacklog: function (win, max, limit) {
-    this.connection.requestChunk(win.id, limit, max);
+    this.connection.requestChunk(win.id, max, limit);
   },
 
   fetchOembeds: function(cb) {
@@ -12296,21 +12304,31 @@ Alice.Application = Class.create({
         var stamp = li.down('.timestamp');
         if (!stamp) return;
 
+        var show_date = false;
         var remove = false;
         var seconds = stamp.innerHTML.strip();
 
         if (li.hasClassName("message")) {
           var time = new Date(seconds * 1000);
-          var diff = (time - win.lasttimestamp) / 1000;
-          remove = !(diff >= 300 || (diff > 60 && time.getMinutes() % 5 == 0));
-          if (!remove) win.lasttimestamp = time;
+          if (win.lasttimestamp) {
+            var diff = (time - win.lasttimestamp) / 1000;
+            remove = !(diff >= 300 || (diff > 60 && time.getMinutes() % 5 == 0));
+            var now = new Date();
+            show_date = now.getDate() != win.lasttimestamp.getDate();
+          }
+          else {
+            remove = true;
+          }
+          if (!remove || !win.lasttimestamp) {
+            win.lasttimestamp = time;
+          }
         }
 
         if (remove) {
           stamp.remove();
         }
         else {
-          stamp.update(Alice.epochToLocal(seconds, this.options.timeformat));
+          stamp.update(Alice.epochToLocal(seconds, this.options.timeformat, show_date));
           stamp.style.opacity = 1;
         }
       },
@@ -12473,11 +12491,11 @@ Alice.Connection = {
     });
   },
 
-  requestChunk: function (win, limit, max) {
+  requestChunk: function (win, max, limit) {
     if (!this.connected) return;
     this.sendMessage({
       source: win,
-      msg: "/chunk " + limit + " " + max,
+      msg: "/chunk " + max + " " + limit,
     });
   }
 };
@@ -12720,7 +12738,7 @@ Alice.Connection.XHR = Class.create(Alice.Connection, {
 
 });
 Alice.Window = Class.create({
-  initialize: function(application, serialized, msgid) {
+  initialize: function(application, serialized) {
     this.application = application;
 
     this.element = $(serialized['id']);
@@ -12737,13 +12755,13 @@ Alice.Window = Class.create({
     this.messages = this.element.down('.messages');
     this.visibleNick = "";
     this.visibleNickTimeout = "";
-    this.lasttimestamp = new Date(0);
+    this.lasttimestamp = null;
     this.nicks = [];
     this.nicks_order = [];
     this.statuses = [];
     this.messageLimit = this.application.isMobile ? 50 : 100;
     this.chunkSize = this.messageLimit / 2;
-    this.msgid = msgid || 0;
+    this.msgid = -1;
     this.visible = true;
     this.forceScroll = false;
     this.lastScrollPosition = 0;
@@ -13027,10 +13045,10 @@ Alice.Window = Class.create({
 
     var position = this.captureScrollPosition();
 
-    if (chunk['range'][0] > this.msgid) {
+    if (parseInt(chunk['range'][0]) > this.msgid) {
       this.messages.insert({"bottom": chunk['html']});
       this.trimMessages();
-      this.msgid = chunk['range'][1];
+      this.msgid = parseInt(chunk['range'][1]);
     }
     else {
       this.bulk_insert = true;
@@ -13038,7 +13056,7 @@ Alice.Window = Class.create({
     }
 
     var original_timestamp = this.lasttimestamp;
-    this.lasttimestamp = new Date(0);
+    this.lasttimestamp = null;
 
     this.messages.select("li:not(.filtered)").each(function (li) {
       this.application.applyFilters(li, this);
