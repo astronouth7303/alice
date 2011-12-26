@@ -11031,10 +11031,11 @@ Object.extend(Alice, {
         var nick = left.innerHTML.stripTags();
         nick = nick.replace(/^\s+/, "");
         nick = nick.replace(/\s+$/, "");
-        clean.push("<"+nick+">");
+        clean.push("&lt; "+nick+"&gt;");
       }
       if (message) {
         var body = message.innerHTML.stripTags();
+console.log(body);
         body = body.replace(/^\s+/, "");
         body = body.replace(/\s+$/, "");
         clean.push(body);
