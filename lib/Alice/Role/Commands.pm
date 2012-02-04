@@ -421,6 +421,35 @@ command invite =>  {
   },
 };
 
+command mode => {
+  name => 'mode',
+  args => qr{(\S+)\s+([+-]\S+)},
+  eg => '/MODE <target> <+/-><mode>',
+  connection => 1,
+  window_type => ['channel'],
+  desc => "Sets a mode",
+  cb => sub {
+    my ($self, $req, $target, $mode) = @_;
+    my $channel = $req->{window}->title;
+    $req->{irc}->send_srv(MODE => $channel, $mode, $target);
+  },
+};
+
+command kick => {
+  name => 'kick',
+  args => qr{(\S+)},
+  eg => '/KICK <nick> [message]',
+  connection => 1,
+  window_type => ['channel'],
+  desc => "Kicks a user with an optional message",
+  cb => sub {
+    my ($self, $req, $nick, $message) = @_;
+    $message = "" unless defined $message;
+    my $channel = $req->{window}->title;
+    $req->{irc}->send_srv(KICK => $channel, $nick, $message);
+  }
+};
+
 command help => {
   name => 'help',
   eg => "/HELP [<command>]",
@@ -430,7 +459,7 @@ command help => {
     my ($self, $req, $command) = @_;
 
     if (!$command) {
-      my $commands = join " ", map {uc $_->{name}} grep {$_->{eg}} values %COMMANDS;
+      my $commands = join " ", sort map {uc $_->{name}} grep {$_->{eg}} values %COMMANDS;
       $req->{stream}->reply('/HELP <command> for help with a specific command');
       $req->{stream}->reply("Available commands: $commands");
       return;
