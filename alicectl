@@ -1,10 +1,14 @@
-#!/bin/sh
+#!/bin/zsh
 set -e
 
 cd `dirname $0`
 
 case "$1" in
   start)
+    if [[ -r /tmp/aliced.pid && -e /proc/`cat /tmp/aliced.pid` ]]; then
+        echo alice already started.
+        exit
+    fi
     bin/alice & echo $! > /tmp/aliced.pid
   ;;
   stop)
